@@ -3,14 +3,19 @@ namespace local_frappe_integration;
 defined('MOODLE_INTERNAL') || die();
 
 require_once($CFG->libdir . '/externallib.php');
-
+global $CFG;
 use external_api;
 use external_function_parameters;
 use external_value;
 use external_single_structure;
 
 class external extends external_api {
-
+    // Función helper para obtener el host sin protocolo
+    protected static function get_moodle_domain(): string {
+        global $CFG;
+        $host = parse_url($CFG->wwwroot, PHP_URL_HOST);
+        return $host ?: '';
+    }
     // 1) Define parámetros de entrada
     public static function course_user_info_parameters(): external_function_parameters {
         return new external_function_parameters([
@@ -72,6 +77,7 @@ class external extends external_api {
         );
 
         return [
+            'moodle_domain' => self::get_moodle_domain(), // Dominio de Moodle sin protocolo
             'firstaccess' => $firstaccess ? (int)$firstaccess : null,
             'lastaccess'  => $lastaccess  ? (int)$lastaccess  : null,
             'lastlogin'   => $lastlogin   ? (int)$lastlogin   : null,
@@ -83,6 +89,7 @@ class external extends external_api {
     // 3) Estructura de retorno
     public static function course_user_info_returns(): external_single_structure {
         return new external_single_structure([
+            'moodle_domain' => new external_value(PARAM_URL, 'Dominio de Moodle sin protocolo'),
             'firstaccess' => new external_value(PARAM_INT,  'Timestamp UNIX primer acceso o null'),
             'lastaccess'  => new external_value(PARAM_INT,  'Timestamp UNIX último acceso o null'),
             'lastlogin'   => new external_value(PARAM_INT,  'Timestamp UNIX último login o null'),

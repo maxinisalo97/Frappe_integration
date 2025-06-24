@@ -2,8 +2,17 @@
 namespace local_frappe_integration;
 defined('MOODLE_INTERNAL') || die();
 require_once($CFG->libdir . '/filelib.php');
-class observer {
+// Al principio del archivo observer.php, añade:
+global $CFG;
 
+
+class observer {
+    // Función helper para obtener el host sin protocolo
+    protected static function get_moodle_domain(): string {
+        global $CFG;
+        $host = parse_url($CFG->wwwroot, PHP_URL_HOST);
+        return $host ?: '';
+    }
     /**
      * Envía un POST a Frappe con el payload y token.
      */
@@ -72,6 +81,33 @@ class observer {
         }
     }
 
+    public static function user_loggedout(\core\event\user_loggedout $event) {
+        global $DB;
+        $d = $event->get_data();
+        $userid = $d['objectid']; // ID de usuario
+    
+        // Sólo notificamos si existe el usuario
+        $user_record = $DB->get_record('user',
+            ['id' => $userid],
+            'id, username',
+            IGNORE_MISSING
+        );
+        if (!$user_record || empty($user_record->username)) {
+            error_log("Frappe Integration (user_loggedout): User with ID {$userid} not found. Skipping.");
+            return;
+        }
+    
+        $payload = [
+            'action'        => 'user_loggedout',
+            'moodle_domain' => self::get_moodle_domain(),
+            'userid'        => $userid,
+            'username'      => $user_record->username,
+            'timestamp'     => $d['timecreated'], // cuándo ocurrió el logout
+        ];
+    
+        self::notify_frappe($payload);
+    }
+
     public static function user_loggedin(\core\event\user_loggedin $event) {
         global $DB;
         $d = $event->get_data();
@@ -90,6 +126,7 @@ class observer {
 
         $payload = [
             'action'            => 'user_loggedin',
+            'moodle_domain'     => self::get_moodle_domain(), // Dominio de Moodle sin protocolo
             'userid'            => $userid,
             'username'          => $username,
             'lastlogin'         => $db_lastlogin,        // El 'lastlogin' oficial de la BD
@@ -131,6 +168,7 @@ class observer {
         // Fusionamos la información específica del curso con los datos del evento
         $payload = array_merge($course_specific_info, [
             'action'    => 'course_viewed',
+            'moodle_domain' => self::get_moodle_domain(), // Dominio de Moodle sin protocolo
             'userid'    => $userid_viewing,
             'username'  => $username_viewing,
             'courseid'  => $courseid_viewed,
