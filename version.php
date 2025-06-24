@@ -4,5 +4,5 @@ defined('MOODLE_INTERNAL') || die();
 $plugin->component = 'local_frappe_integration';
 $plugin->release = 'v0.0.1';
 $plugin->version   = 2025062123;   // YYYYMMDDXX
-$plugin->requires  = 2019121200;   // Moodle 4.2+
+$plugin->requires  = 2018051700;   // Moodle 4.2+
 $plugin->maturity  = MATURITY_ALPHA;
