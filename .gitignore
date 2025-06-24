@@ -1,0 +1,5 @@
+*.log
+cache/
+*.swp
+/.vscode/
+/.idea/
