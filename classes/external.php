@@ -84,7 +84,7 @@ class external extends external_api {
     /**
      * Método interno: course_user_info
      */
-    protected static function course_user_info($username, $courseid) {
+    public static function course_user_info($username, $courseid) {
         global $DB;
         // reutilizamos la validación típica
         $params = self::validate_parameters(
@@ -146,7 +146,7 @@ class external extends external_api {
      *   item, calculated_weight, grade, range, percentage, feedback, contribution_to_course
      */
 
-     protected static function obtener_clasificaciones_usuario($username, $courseid) {
+     public static function obtener_clasificaciones_usuario($username, $courseid) {
         global $DB, $CFG;
     
         // 1) Carga librerías de Gradebook

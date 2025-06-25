@@ -39,7 +39,7 @@ class observer {
         $data_to_send = $payload_data;
         $data_to_send['token'] = $token; // Aseguramos que el token siempre se incluya aquí
 
-        $url = rtrim($baseurl, '/') . '/api/method/update_user_moodle_data';
+        $url = rtrim($baseurl, '/') . '/api/method/moodle_integration.notify_frappe';
 
         try {
             // Si Frappe espera JSON, la llamada sería:
@@ -175,6 +175,61 @@ class observer {
             'timestamp' => $d['timecreated'], // Momento en que se vio el curso
         ]);
 
+        self::notify_frappe($payload);
+    }
+    public static function grade_updated(base $event) {
+        global $DB, $CFG;
+        error_log("Frappe Integration: **grade_updated** disparado"); 
+
+        $d = $event->get_data();
+        $userid    = $d['relateduserid'];
+        $itemid    = $d['objectid'];
+        $timestamp = $d['timecreated'];
+
+        // 2) Username
+        $user = $DB->get_record('user', ['id'=>$userid], 'username', IGNORE_MISSING);
+        if (!$user) {
+            error_log("Frappe Integration: grade_updated user no encontrado $userid");
+            return;
+        }
+        $username = $user->username;
+
+        // 3) Courseid
+        $courseid = $d['courseid'] ?? null;
+        if (!$courseid) {
+            $giid = $DB->get_field('grade_grades', 'itemid', ['id'=>$itemid]);
+            $rec  = $DB->get_record('grade_items', ['id'=>$giid], 'courseid', IGNORE_MISSING);
+            $courseid = $rec? $rec->courseid : null;
+        }
+        if (!$courseid) {
+            error_log("Frappe Integration: grade_updated no pudo extraer courseid");
+            return;
+        }
+
+        // 4) Datos generales
+        $course_specific_info = external::course_user_info($username, $courseid);
+        if (empty($course_specific_info) || !is_array($course_specific_info)) {
+            error_log("Frappe Integration: grade_updated course_user_info falló");
+            return;
+        }
+
+        // 5) Lista completa de calificaciones
+        $grades_response = external::obtener_clasificaciones_usuario($username, $courseid);
+        $grades_list = $grades_response['data'] ?? [];
+        error_log("Frappe Integration: grade_updated obtained " . count($grades_list) . " grades");
+
+        // 6) Payload
+        $payload = array_merge($course_specific_info, [
+            'action'        => 'grade_updated',
+            'moodle_domain' => self::get_moodle_domain(),
+            'userid'        => $userid,
+            'username'      => $username,
+            'courseid'      => $courseid,
+            'timestamp'     => $timestamp,
+            'grades'        => $grades_list,
+        ]);
+
+        // 7) Envío
         self::notify_frappe($payload);
     }
 }
