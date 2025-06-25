@@ -4,96 +4,257 @@ defined('MOODLE_INTERNAL') || die();
 
 require_once($CFG->libdir . '/externallib.php');
 global $CFG;
+
 use external_api;
 use external_function_parameters;
 use external_value;
 use external_single_structure;
 
 class external extends external_api {
-    // Función helper para obtener el host sin protocolo
+    /**
+     * Función helper para obtener el host sin protocolo
+     */
     protected static function get_moodle_domain(): string {
         global $CFG;
         $host = parse_url($CFG->wwwroot, PHP_URL_HOST);
         return $host ?: '';
     }
-    // 1) Define parámetros de entrada
-    public static function course_user_info_parameters(): external_function_parameters {
+
+    /**
+     * 1) Parámetros del endpoint genérico
+     */
+    public static function api_parameters(): external_function_parameters {
         return new external_function_parameters([
-            'username' => new external_value(PARAM_USERNAME, 'Nombre de usuario en Moodle'),
-            'courseid' => new external_value(PARAM_INT, 'ID de curso'),
+            'method'  => new external_value(PARAM_ALPHANUMEXT, 'Nombre del método interno a invocar'),
+            'payload' => new external_value(PARAM_RAW_TRIMMED, 'JSON con parámetros para el método'),
         ]);
     }
 
-    // 2) Lógica del endpoint
-    // 2) Lógica del endpoint
-    public static function course_user_info($username, $courseid) {
-        // die("DEBUG: ¡SE ESTÁ EJECUTANDO EL ARCHIVO MODIFICADO EL " . date("Y-m-d H:i:s") . "!");
+    /**
+     * 2) Dispatch genérico a cada método interno
+     */
+    public static function api($method, $payload) {
         global $DB;
         $params = self::validate_parameters(
-            self::course_user_info_parameters(),
+            self::api_parameters(),
+            compact('method','payload')
+        );
+
+        // Lista blanca de métodos permitidos
+        $allowed = [
+            'course_user_info' => 'course_user_info',
+            'obtener_clasificaciones_usuario'=> 'obtener_clasificaciones_usuario',
+            // Aquí puedes añadir más métodos: 'otro_metodo' => 'otro_internal'
+        ];
+
+        if (!isset($allowed[$params['method']])) {
+            throw new \invalid_parameter_exception('Método no permitido: ' . $params['method']);
+        }
+
+        // Decodifica payload JSON
+        $args = json_decode($params['payload'], true);
+        if (!is_array($args)) {
+            throw new \invalid_parameter_exception('Payload JSON inválido');
+        }
+
+        // Llama al método interno estático
+        $internal = $allowed[$params['method']];
+        // Tras el call_user_func_array en api():
+        $raw = call_user_func_array([self::class, $internal], $args);
+
+        // Si $raw['data'] es array u object, serialízalo.
+        if (is_array($raw['data']) || is_object($raw['data'])) {
+            $raw['data'] = json_encode($raw['data']);
+        }
+
+        return $raw;
+    }
+
+    /**
+     * 3) Estructura de retorno genérica
+     */
+    public static function api_returns(): external_single_structure {
+        return new external_single_structure([
+            'status'  => new external_value(PARAM_TEXT, '"success" o "error"'),
+            'data'    => new external_value(PARAM_RAW,  'Resultado del método interno'),
+            'message' => new external_value(PARAM_TEXT, 'Mensaje opcional en caso de error'),
+        ]);
+    }
+
+    /**
+     * Método interno: course_user_info
+     */
+    protected static function course_user_info($username, $courseid) {
+        global $DB;
+        // reutilizamos la validación típica
+        $params = self::validate_parameters(
+            new external_function_parameters([
+                'username' => new external_value(PARAM_ALPHANUMEXT, 'Username en Moodle'),
+                'courseid' => new external_value(PARAM_INT, 'ID de curso')
+            ]),
             compact('username','courseid')
         );
 
-        // 2.1 Buscamos usuario y extraemos $userid
+        // 1) Buscar usuario
+        $user = $DB->get_record('user', ['username' => $params['username']], 'id, lastlogin', IGNORE_MISSING);
+        if (!$user) {
+            return ['status' => 'error', 'data' => null, 'message' => 'Usuario no existe'];
+        }
+        $uid = (int)$user->id;
+
+        // 2) Verificar curso
+        if (!$DB->record_exists('course', ['id' => $params['courseid']])) {
+            return ['status' => 'error', 'data' => null, 'message' => 'Curso no existe'];
+        }
+
+        // 3) Primer acceso
+        $first = $DB->get_field_sql(
+            "SELECT MIN(timecreated) FROM {logstore_standard_log} WHERE userid = :u AND courseid = :c",
+            ['u'=>$uid,'c'=>$params['courseid']]
+        );
+
+        // 4) Último acceso al curso
+        $last = $DB->get_field(
+            'user_lastaccess', 'timeaccess', ['userid'=>$uid,'courseid'=>$params['courseid']]
+        );
+
+        // 5) Online
+        $threshold = time() - 300;
+        $online = (bool)$DB->record_exists_select(
+            'sessions', 'userid = :u AND timemodified > :t', ['u'=>$uid,'t'=>$threshold]
+        );
+
+        // Resultado
+        $result = [
+            'moodle_domain' => self::get_moodle_domain(),
+            'firstaccess'   => $first ? (int)$first : null,
+            'lastaccess'    => $last  ? (int)$last  : null,
+            'lastlogin'     => (int)$user->lastlogin,
+            'online'        => $online
+        ];
+
+        return [
+            'status'=>'success',
+            'data'=>$result,      // array puro
+            'message'=>''
+          ];
+    }
+        /**
+     * Método interno: obtener_clasificaciones_usuario
+     *   Parámetros: ['username' => string, 'courseid' => int]
+     * Devuelve: lista ordenada de items con:
+     *   item, calculated_weight, grade, range, percentage, feedback, contribution_to_course
+     */
+
+     protected static function obtener_clasificaciones_usuario($username, $courseid) {
+        global $DB, $CFG;
+    
+        // 1) Carga librerías de Gradebook
+        require_once($CFG->libdir . '/grade/grade_item.php');
+        require_once($CFG->libdir . '/grade/grade_grade.php');
+    
+        // 2) Valida parámetros
+        $params = self::validate_parameters(
+            new external_function_parameters([
+                'username' => new external_value(PARAM_ALPHANUMEXT, 'Username en Moodle'),
+                'courseid' => new external_value(PARAM_INT,       'ID de curso'),
+            ]),
+            compact('username','courseid')
+        );
+    
+        // 3) Busca usuario
         $user = $DB->get_record('user',
-            ['username'=>$params['username']],
-            'id, lastlogin',
+            ['username' => $params['username']],
+            'id',
             IGNORE_MISSING
         );
         if (!$user) {
-            throw new \invalid_parameter_exception('Usuario no existe');
+            return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
         }
-        $userid = (int)$user->id;
-
-        // 2.2 Verificamos curso
-        if (!$DB->record_exists('course',['id'=>$params['courseid']])) {
-            throw new \invalid_parameter_exception('Curso no existe');
+        $uid = (int)$user->id;
+    
+        // 4) Trae todos los ítems de calificación
+        $gradeitems = \grade_item::fetch_all(['courseid' => $params['courseid']]);
+        if (empty($gradeitems)) {
+            return ['status'=>'error','data'=>null,'message'=>'No hay ítems de calificación en el curso'];
         }
-
-        // 2.3 Primer acceso
-        $firstaccess = $DB->get_field_sql("
-            SELECT MIN(timecreated)
-              FROM {logstore_standard_log}
-             WHERE userid = :uid
-               AND courseid = :cid
-        ", ['uid'=>$userid,'cid'=>$params['courseid']]);
-
-        // 2.4 Último acceso al curso
-        $lastaccess = $DB->get_field(
-            'user_lastaccess',
-            'timeaccess',
-            ['userid'=>$userid,'courseid'=>$params['courseid']]
-        );
-
-        // 2.5 Último login global
-        $lastlogin = (int)$user->lastlogin;
-
-        // 2.6 Estado online
-        $threshold = time() - 300; // 5 minutos de umbral
-        $online = (bool)$DB->record_exists_select(
-            'sessions',
-            'userid = :uid AND timemodified > :thr', // <--- CORREGIDO
-            ['uid'=>$userid,'thr'=>$threshold]
-        );
-
-        return [
-            'moodle_domain' => self::get_moodle_domain(), // Dominio de Moodle sin protocolo
-            'firstaccess' => $firstaccess ? (int)$firstaccess : null,
-            'lastaccess'  => $lastaccess  ? (int)$lastaccess  : null,
-            'lastlogin'   => $lastlogin   ? (int)$lastlogin   : null,
-            'online'      => $online,
-        ];
+    
+        // 5) Calcula la suma total de coeficientes para determinar pesos
+        $sumcoef = 0;
+        $countnonzero = 0;
+        foreach ($gradeitems as $gi) {
+            if ($gi->itemtype === 'course') {
+                continue;
+            }
+            $coef = (float)$gi->aggregationcoef;
+            if ($coef > 0) {
+                $sumcoef += $coef;
+                $countnonzero++;
+            }
+        }
+        // Si todos los coefs son cero, usamos conteo igualitario
+        if ($sumcoef <= 0) {
+            // número de ítems no-course
+            $totalitems = 0;
+            foreach ($gradeitems as $gi) {
+                if ($gi->itemtype !== 'course') {
+                    $totalitems++;
+                }
+            }
+            $equalWeight = $totalitems > 0 ? 100.0 / $totalitems : 0;
+        }
+    
+        $rows = [];
+        foreach ($gradeitems as $gi) {
+            // 6) Saltar total del curso
+            if ($gi->itemtype === 'course') {
+                continue;
+            }
+    
+            // 7) Carga nota del usuario
+            $gg = \grade_grade::fetch(['itemid'=>$gi->id,'userid'=>$uid], IGNORE_MISSING);
+            if (!$gg) {
+                continue;
+            }
+    
+            // 8) Formatea nota y porcentaje interno
+            $gradeval  = $gg->finalgrade;
+            $formatted = ($gradeval === null) ? null : round($gradeval, 2);
+    
+            $raw        = $gg->rawgrade;
+            $percentage = null;
+            if ($raw !== null && $gi->grademax > $gi->grademin) {
+                $percentage = round((($raw - $gi->grademin) / ($gi->grademax - $gi->grademin)) * 100, 2);
+            }
+    
+            // 9) Calcula el peso relativo dentro del curso
+            $coef = (float)$gi->aggregationcoef;
+            if ($sumcoef > 0) {
+                $weightpct = round($coef / $sumcoef * 100, 2);
+            } else {
+                $weightpct = round($equalWeight, 2);
+            }
+    
+            $rows[] = [
+                'item'                   => $gi->get_name(false),
+                'calculated_weight'      => $weightpct,        // porcentaje de peso
+                'grade'                  => $formatted,
+                'range'                  => "{$gi->grademin}-{$gi->grademax}",
+                'percentage'             => $percentage,
+                'feedback'               => $gg->feedback,
+                'contribution_to_course' => $weightpct,        // igual que calculated_weight
+                'sortorder'              => $gi->sortorder,
+            ];
+        }
+    
+        // 10) Ordenar y limpiar sortorder
+        usort($rows, function($a,$b){ return $a['sortorder'] - $b['sortorder']; });
+        foreach ($rows as &$r) {
+            unset($r['sortorder']);
+        }
+    
+        return ['status'=>'success','data'=>$rows,'message'=>''];
     }
-
-
-    // 3) Estructura de retorno
-    public static function course_user_info_returns(): external_single_structure {
-        return new external_single_structure([
-            'moodle_domain' => new external_value(PARAM_URL, 'Dominio de Moodle sin protocolo'),
-            'firstaccess' => new external_value(PARAM_INT,  'Timestamp UNIX primer acceso o null'),
-            'lastaccess'  => new external_value(PARAM_INT,  'Timestamp UNIX último acceso o null'),
-            'lastlogin'   => new external_value(PARAM_INT,  'Timestamp UNIX último login o null'),
-            'online'      => new external_value(PARAM_BOOL, 'Si el usuario está “online”'),
-        ]);
-    }
+    
+    
 }

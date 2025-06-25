@@ -2,15 +2,14 @@
 defined('MOODLE_INTERNAL') || die();
 
 $functions = [
-    // Endpoint de consulta puntual:
-    'local_frappeintegration_course_user_info' => [
+    // Único endpoint genérico
+    'local_frappeintegration_api' => [
         'classname'   => 'local_frappe_integration\external',
-        'methodname'  => 'course_user_info',
+        'methodname'  => 'api',
         'classpath'   => 'local/frappe_integration/classes/external.php',
-        'description' => 'Devuelve firstaccess, lastaccess, lastlogin y online status de un usuario en un curso.',
+        'description' => 'Dispatch a multiple internal methods based on "method" param',
         'type'        => 'read',
     ],
-
 ];
 
 $services = [
