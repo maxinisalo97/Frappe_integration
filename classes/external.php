@@ -6,7 +6,8 @@ require_once($CFG->libdir . '/externallib.php');
 require_once($CFG->libdir . '/gradelib.php');
 
 global $CFG;
-
+use DateTime;
+use DateTimeZone;
 use external_api;
 use external_function_parameters;
 use external_value;
@@ -32,6 +33,14 @@ class external extends external_api {
         ]);
     }
 
+    private static function to_local_timestamp($ts, DateTimeZone $tz) {
+        if (empty($ts)) {
+            return null;
+        }
+        $dt_utc = new DateTime("@{$ts}");
+        $offset = $tz->getOffset($dt_utc);
+        return $ts + $offset;
+    }
     /**
      * 2) Dispatch genérico a cada método interno
      */
@@ -87,6 +96,7 @@ class external extends external_api {
      * Método interno: course_user_info
      */
     public static function course_user_info($username, $courseid) {
+        $tz = new DateTimeZone('Europe/Madrid');
         global $DB;
         // reutilizamos la validación típica
         $params = self::validate_parameters(
@@ -129,8 +139,8 @@ class external extends external_api {
         // Resultado
         $result = [
             'moodle_domain' => self::get_moodle_domain(),
-            'firstaccess'   => $first ? (int)$first : null,
-            'lastaccess'    => $last  ? (int)$last  : null,
+            'firstaccess'   => to_local_timestamp((int)$first,   $tz),
+            'lastaccess'    => to_local_timestamp((int)$first,   $tz),
             'lastlogin'     => (int)$user->lastlogin,
             'online'        => $online
         ];
@@ -149,6 +159,7 @@ class external extends external_api {
      */
 
      public static function obtener_clasificaciones_usuario($username, $courseid) {
+        $tz = new DateTimeZone('Europe/Madrid');
         global $DB, $CFG;
     
         // 1) Carga librerías de Gradebook
