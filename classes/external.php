@@ -3,6 +3,8 @@ namespace local_frappe_integration;
 defined('MOODLE_INTERNAL') || die();
 
 require_once($CFG->libdir . '/externallib.php');
+require_once($CFG->libdir . '/gradelib.php');
+
 global $CFG;
 
 use external_api;

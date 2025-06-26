@@ -1,6 +1,5 @@
 <?php
 defined('MOODLE_INTERNAL') || die();
-
 $observers = [
     // Cuando el usuario inicia sesión
     [
@@ -15,4 +14,9 @@ $observers = [
         'eventname' => '\core\event\course_viewed',
         'callback'  => 'local_frappe_integration\observer::course_viewed',
     ],
+        // Se dispara cuando se califica o actualiza la nota de un usuario en un ítem.
+        [
+            'eventname' => '\core\event\user_graded',
+            'callback'  => 'local_frappe_integration\observer::user_graded',
+        ],
 ];

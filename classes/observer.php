@@ -13,73 +13,82 @@ class observer {
         $host = parse_url($CFG->wwwroot, PHP_URL_HOST);
         return $host ?: '';
     }
-    /**
-     * Envía un POST a Frappe con el payload y token.
-     */
-    protected static function notify_frappe(array $payload_data) { // Renombrado $data a $payload_data para claridad
-        // global $CFG; // No parece necesario aquí
+/**
+ * Envía un POST con JSON a Frappe con el payload y token.
+ *
+ * @param array $payload_data  Array asociativo con los datos de la notificación.
+ * @return mixed               Cadena de respuesta en caso de éxito, false en caso de error.
+ */
+protected static function notify_frappe(array $payload_data) {
+    // 1. Cargamos URL base y token desde configuración
+    $baseurl = get_config('local_frappe_integration', 'frappe_api_url');
+    $token   = get_config('local_frappe_integration', 'frappe_api_token');
 
-        $baseurl = get_config('local_frappe_integration','frappe_api_url');
-        $token   = get_config('local_frappe_integration','frappe_api_token');
-
-        if (empty($baseurl)) {
-            error_log('Frappe Integration: Frappe API URL is not configured.');
-            return false;
-        }
-        if (empty($token)) {
-            error_log('Frappe Integration: Frappe API Token is not configured.');
-            return false;
-        }
-
-        $curl = new \curl();
-        // $curl->setHeader('Content-Type: application/json'); // Descomenta si tu API Frappe espera JSON
-                                                              // y asegúrate de enviar $data_to_send como json_encode($data_to_send)
-
-        // Preparamos los datos a enviar, incluyendo el token
-        $data_to_send = $payload_data;
-        $data_to_send['token'] = $token; // Aseguramos que el token siempre se incluya aquí
-
-        $url = rtrim($baseurl, '/') . '/api/method/moodle_integration.notify_frappe';
-
-        try {
-            // Si Frappe espera JSON, la llamada sería:
-            // $response_body = $curl->post($url, json_encode($data_to_send));
-            // Si Frappe espera datos de formulario (x-www-form-urlencoded), la llamada es:
-            $response_body = $curl->post($url, $data_to_send);
-
-            $http_status = $curl->get_info(CURLINFO_HTTP_CODE);
-
-            // Log de la petición
-            error_log(sprintf(
-                'Frappe Integration: Sent data to %s → HTTP %d',
-                $url,
-                $http_status
-            ));
-            // Log del payload (evita Array to string conversion)
-            error_log('Frappe Integration: Payload: ' . json_encode($data_to_send));
-            // Log de la respuesta
-            error_log('Frappe Integration: Response: ' . $response_body);
-
-            if ($http_status >= 200 && $http_status < 300) {
-                return $response_body;
-            } else {
-                error_log(sprintf(
-                    'Frappe Integration: Error from Frappe API. Status: %d. URL: %s. Response: %s',
-                    $http_status,
-                    $url,
-                    $response_body
-                ));
-                return false;
-            }
-
-        } catch (\curl_exception $e) { // Captura excepciones específicas de la clase \core\curl de Moodle
-            error_log('Frappe Integration: Moodle cURL exception: ' . $e->getMessage() . ' URL: ' . $url);
-            return false;
-        } catch (\Exception $e) { // Captura otras excepciones generales
-            error_log('Frappe Integration: General exception during cURL: ' . $e->getMessage() . ' URL: ' . $url);
-            return false;
-        }
+    if (empty($baseurl)) {
+        error_log('Frappe Integration: Frappe API URL is not configured.');
+        return false;
     }
+    if (empty($token)) {
+        error_log('Frappe Integration: Frappe API Token is not configured.');
+        return false;
+    }
+
+    // 2. Preparamos URL y payload completo
+    $url = rtrim($baseurl, '/') . '/api/method/moodle_integration.notify_frappe';
+    $payload = $payload_data;
+    $payload['token'] = $token;
+
+    // 3. Codificamos a JSON
+    $jsonpayload = json_encode($payload);
+    if ($jsonpayload === false) {
+        error_log('Frappe Integration: json_encode error: ' . json_last_error_msg());
+        return false;
+    }
+
+    // 4. Enviamos con Moodle cURL
+    $curl = new \curl();
+    $headers = [
+        'Content-Type: application/json',
+        'Accept: application/json',
+    ];
+
+    try {
+        $response_body = $curl->post(
+            $url,
+            $jsonpayload,
+            ['CURLOPT_HTTPHEADER' => $headers]
+        );
+        $http_status = $curl->get_info(CURLINFO_HTTP_CODE);
+
+        // 5. Logs para depurar
+        error_log(sprintf(
+            'Frappe Integration: Sent JSON to %s → HTTP %d',
+            $url,
+            $http_status
+        ));
+        error_log('Frappe Integration: JSON payload: ' . $jsonpayload);
+        error_log('Frappe Integration: Response body: ' . $response_body);
+
+        if ($http_status >= 200 && $http_status < 300) {
+            return $response_body;
+        } else {
+            error_log(sprintf(
+                'Frappe Integration: Error from Frappe API. Status: %d. URL: %s. Response: %s',
+                $http_status,
+                $url,
+                $response_body
+            ));
+            return false;
+        }
+
+    } catch (\curl_exception $e) {
+        error_log('Frappe Integration: cURL exception: ' . $e->getMessage());
+        return false;
+    } catch (\Exception $e) {
+        error_log('Frappe Integration: General exception during notify_frappe: ' . $e->getMessage());
+        return false;
+    }
+}
 
     public static function user_loggedout(\core\event\user_loggedout $event) {
         global $DB;
@@ -177,59 +186,32 @@ class observer {
 
         self::notify_frappe($payload);
     }
-    public static function grade_updated(base $event) {
-        global $DB, $CFG;
-        error_log("Frappe Integration: **grade_updated** disparado"); 
+    public static function user_graded(\core\event\user_graded $event) {
+        global $DB;
+        $userid   = $event->relateduserid;
+        $courseid = $event->courseid; // Corrección: Obtenerlo directamente del evento
 
-        $d = $event->get_data();
-        $userid    = $d['relateduserid'];
-        $itemid    = $d['objectid'];
-        $timestamp = $d['timecreated'];
-
-        // 2) Username
-        $user = $DB->get_record('user', ['id'=>$userid], 'username', IGNORE_MISSING);
-        if (!$user) {
-            error_log("Frappe Integration: grade_updated user no encontrado $userid");
-            return;
-        }
-        $username = $user->username;
-
-        // 3) Courseid
-        $courseid = $d['courseid'] ?? null;
-        if (!$courseid) {
-            $giid = $DB->get_field('grade_grades', 'itemid', ['id'=>$itemid]);
-            $rec  = $DB->get_record('grade_items', ['id'=>$giid], 'courseid', IGNORE_MISSING);
-            $courseid = $rec? $rec->courseid : null;
-        }
-        if (!$courseid) {
-            error_log("Frappe Integration: grade_updated no pudo extraer courseid");
+        $username = $DB->get_field('user', 'username', ['id' => $userid]);
+        if (!$username) {
+            error_log("Frappe Integration: Usuario no encontrado ID $userid");
             return;
         }
 
-        // 4) Datos generales
+        // Llamamos a tus funciones, pero ahora con el courseid correcto y sin consultas redundantes
         $course_specific_info = external::course_user_info($username, $courseid);
-        if (empty($course_specific_info) || !is_array($course_specific_info)) {
-            error_log("Frappe Integration: grade_updated course_user_info falló");
-            return;
-        }
-
-        // 5) Lista completa de calificaciones
         $grades_response = external::obtener_clasificaciones_usuario($username, $courseid);
-        $grades_list = $grades_response['data'] ?? [];
-        error_log("Frappe Integration: grade_updated obtained " . count($grades_list) . " grades");
-
-        // 6) Payload
-        $payload = array_merge($course_specific_info, [
+        
+        $payload_completo = array_merge($course_specific_info['data'] ?? [], [
             'action'        => 'grade_updated',
             'moodle_domain' => self::get_moodle_domain(),
             'userid'        => $userid,
             'username'      => $username,
             'courseid'      => $courseid,
-            'timestamp'     => $timestamp,
-            'grades'        => $grades_list,
+            'timestamp'     => $event->timecreated,
+            'grades'        => $grades_response['data'] ?? [],
         ]);
 
-        // 7) Envío
-        self::notify_frappe($payload);
+        self::notify_frappe($payload_completo);
+        error_log("Frappe Integration - Payload Completo: " . count($payload_completo['grades']) . " notas enviadas.");
     }
 }
