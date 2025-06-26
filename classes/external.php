@@ -141,7 +141,7 @@ class external extends external_api {
             'moodle_domain' => self::get_moodle_domain(),
             'firstaccess'   => self::to_local_timestamp((int)$first,   $tz),
             'lastaccess'    => self::to_local_timestamp((int)$first,   $tz),
-            'lastlogin'     => (int)$user->lastlogin,
+            'lastlogin'     => self::to_local_timestamp((int)$user->lastlogin, $tz),
             'online'        => $online
         ];
 
