@@ -2,11 +2,9 @@
 namespace local_frappe_integration;
 defined('MOODLE_INTERNAL') || die();
 require_once($CFG->libdir . '/filelib.php');
-
 // Al principio del archivo observer.php, añade:
 global $CFG;
-use DateTime;
-use DateTimeZone;
+
 
 class observer {
     // Función helper para obtener el host sin protocolo
@@ -15,16 +13,7 @@ class observer {
         $host = parse_url($CFG->wwwroot, PHP_URL_HOST);
         return $host ?: '';
     }
-    protected static function to_local_timestamp($ts, DateTimeZone $tz) {
-        if (empty($ts)) {
-            return null;
-        }
-        // Creamos un DateTime en UTC y pedimos el offset de Madrid
-        $dt_utc   = new DateTime("@{$ts}");
-        $offset   = $tz->getOffset($dt_utc);
-        // Devolvemos el epoch ajustado
-        return $ts + $offset;
-    }
+    
 /**
  * Envía un POST con JSON a Frappe con el payload y token.
  *
@@ -103,7 +92,6 @@ protected static function notify_frappe(array $payload_data) {
 }
 
     public static function user_loggedout(\core\event\user_loggedout $event) {
-        $tz = new DateTimeZone('Europe/Madrid');
         global $DB;
         $d = $event->get_data();
         $userid = $d['objectid']; // ID de usuario
@@ -118,21 +106,19 @@ protected static function notify_frappe(array $payload_data) {
             error_log("Frappe Integration (user_loggedout): User with ID {$userid} not found. Skipping.");
             return;
         }
-        $timecreated = self::to_local_timestamp($d['timecreated'], $tz);
     
         $payload = [
             'action'        => 'user_loggedout',
             'moodle_domain' => self::get_moodle_domain(),
             'userid'        => $userid,
             'username'      => $user_record->username,
-            'timestamp'     => $timecreated, // cuándo ocurrió el logout
+            'timestamp'     => $d['timecreated'], // cuándo ocurrió el logout
         ];
     
         self::notify_frappe($payload);
     }
 
     public static function user_loggedin(\core\event\user_loggedin $event) {
-        $tz = new DateTimeZone('Europe/Madrid');
         global $DB;
         $d = $event->get_data();
         $userid = $d['objectid'];
@@ -146,15 +132,14 @@ protected static function notify_frappe(array $payload_data) {
         
         $username = $user_record->username;
         $db_lastlogin = (int)$user_record->lastlogin; // Lastlogin de la tabla 'user'
-        $lastlog_format = self::to_local_timestamp($db_lastlogin, $tz);
-        $event_timecreated = self::to_local_timestamp($d['timecreated'], $tz);      // Timestamp del evento
+        $event_timecreated = $d['timecreated'];       // Timestamp del evento
 
         $payload = [
             'action'            => 'user_loggedin',
             'moodle_domain'     => self::get_moodle_domain(), // Dominio de Moodle sin protocolo
             'userid'            => $userid,
             'username'          => $username,
-            'lastlogin'         => $lastlog_format,        // El 'lastlogin' oficial de la BD
+            'lastlogin'         => $db_lastlogin,        // El 'lastlogin' oficial de la BD
             'event_timecreated' => $event_timecreated,   // El momento en que se disparó el evento
         ];
         
@@ -164,7 +149,6 @@ protected static function notify_frappe(array $payload_data) {
      * Evento: el usuario ve (entra) a un curso.
      */
     public static function course_viewed(\core\event\course_viewed $event) {
-        $tz = new DateTimeZone('Europe/Madrid');
         global $DB; // $USER no es necesario aquí si usamos $d['userid']
         $d = $event->get_data();
 
@@ -190,7 +174,7 @@ protected static function notify_frappe(array $payload_data) {
             // Podrías decidir enviar datos parciales si es apropiado, o no enviar nada:
             return;
         }
-        $timecreated = self::to_local_timestamp($d['timecreated'], $tz);
+
         // Fusionamos la información específica del curso con los datos del evento
         $payload = array_merge($course_specific_info, [
             'action'    => 'course_viewed',
@@ -198,13 +182,12 @@ protected static function notify_frappe(array $payload_data) {
             'userid'    => $userid_viewing,
             'username'  => $username_viewing,
             'courseid'  => $courseid_viewed,
-            'timestamp' => $timecreated, // Momento en que se vio el curso
+            'timestamp' => $d['timecreated'], // Momento en que se vio el curso
         ]);
 
         self::notify_frappe($payload);
     }
     public static function user_graded(\core\event\user_graded $event) {
-        $tz = new DateTimeZone('Europe/Madrid');
         global $DB;
         $userid   = $event->relateduserid;
         $courseid = $event->courseid; // Corrección: Obtenerlo directamente del evento
@@ -218,7 +201,6 @@ protected static function notify_frappe(array $payload_data) {
         // Llamamos a tus funciones, pero ahora con el courseid correcto y sin consultas redundantes
         $course_specific_info = external::course_user_info($username, $courseid);
         $grades_response = external::obtener_clasificaciones_usuario($username, $courseid);
-        $timecreated = self::to_local_timestamp($event->timecreated, $tz);
         
         $payload_completo = array_merge($course_specific_info['data'] ?? [], [
             'action'        => 'grade_updated',
@@ -226,7 +208,7 @@ protected static function notify_frappe(array $payload_data) {
             'userid'        => $userid,
             'username'      => $username,
             'courseid'      => $courseid,
-            'timestamp'     => $timecreated,
+            'timestamp'     => $event->timecreated,
             'grades'        => $grades_response['data'] ?? [],
         ]);
 
