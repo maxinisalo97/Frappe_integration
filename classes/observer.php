@@ -1,6 +1,8 @@
 <?php
 namespace local_frappe_integration;
 defined('MOODLE_INTERNAL') || die();
+use local_frappe_integration\task\send_frappe_event;
+use core\task\manager;
 require_once($CFG->libdir . '/filelib.php');
 // Al principio del archivo observer.php, añade:
 global $CFG;
@@ -13,6 +15,26 @@ class observer {
         $host = parse_url($CFG->wwwroot, PHP_URL_HOST);
         return $host ?: '';
     }
+
+    protected static function enqueue_frappe_event(array $payload_data) {
+        // 1) Log al entrar
+        error_log('Frappe Integration: enqueue_frappe_event → inicio. Acción: '
+            . ($payload_data['action'] ?? 'n/a'));
+    
+        $task = new \local_frappe_integration\task\send_frappe_event();
+        $task->set_custom_data($payload_data);
+    
+        try {
+            \core\task\manager::queue_adhoc_task($task);
+            // 2) Log si no ha saltado excepción
+            error_log('Frappe Integration: enqueue_frappe_event → task encolada correctamente.');
+        } catch (\Throwable $e) {
+            // 3) Si hay fallo, lo capturamos
+            error_log('Frappe Integration: enqueue_frappe_event → ¡ERROR al encolar!: '
+                . $e->getMessage());
+        }
+    }
+    
     
 /**
  * Envía un POST con JSON a Frappe con el payload y token.
@@ -20,7 +42,7 @@ class observer {
  * @param array $payload_data  Array asociativo con los datos de la notificación.
  * @return mixed               Cadena de respuesta en caso de éxito, false en caso de error.
  */
-protected static function notify_frappe(array $payload_data) {
+public static function notify_frappe(array $payload_data) {
     // 1. Cargamos URL base y token desde configuración
     $baseurl = get_config('local_frappe_integration', 'frappe_api_url');
     $token   = get_config('local_frappe_integration', 'frappe_api_token');
@@ -115,7 +137,7 @@ protected static function notify_frappe(array $payload_data) {
             'timestamp'     => $d['timecreated'], // cuándo ocurrió el logout
         ];
     
-        self::notify_frappe($payload);
+        self::enqueue_frappe_event($payload);
     }
 
     public static function user_loggedin(\core\event\user_loggedin $event) {
@@ -143,7 +165,7 @@ protected static function notify_frappe(array $payload_data) {
             'event_timecreated' => $event_timecreated,   // El momento en que se disparó el evento
         ];
         
-        self::notify_frappe($payload);
+        self::enqueue_frappe_event($payload);
     }
     /**
      * Evento: el usuario ve (entra) a un curso.
@@ -185,7 +207,7 @@ protected static function notify_frappe(array $payload_data) {
             'timestamp' => $d['timecreated'], // Momento en que se vio el curso
         ]);
 
-        self::notify_frappe($payload);
+        self::enqueue_frappe_event($payload);
     }
     public static function user_graded(\core\event\user_graded $event) {
         global $DB;
@@ -212,7 +234,7 @@ protected static function notify_frappe(array $payload_data) {
             'grades'        => $grades_response['data'] ?? [],
         ]);
 
-        self::notify_frappe($payload_completo);
+        self::enqueue_frappe_event($payload_completo);
         error_log("Frappe Integration - Payload Completo: " . count($payload_completo['grades']) . " notas enviadas.");
     }
 }
