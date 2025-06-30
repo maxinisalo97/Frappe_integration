@@ -7,8 +7,8 @@ require_once($CFG->libdir . '/gradelib.php');
 require_once(__DIR__ . '/../locallib.php');
 $blockdir = \core_component::get_plugin_directory('block', 'dedication_atu');
 require_once($blockdir . '/models/course.php');
-require_once($blockdir . '/lib.php');
-require_once($blockdir . '/config.php');
+require_once($blockdir . '/dedication_atu_lib.php'); // aquí se define el manager y la constante por defecto
+require_once($blockdir . '/lib.php');             // aquí está la clase libDedication_atu
 
 global $CFG;
 
