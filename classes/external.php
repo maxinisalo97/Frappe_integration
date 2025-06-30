@@ -5,7 +5,7 @@ defined('MOODLE_INTERNAL') || die();
 require_once($CFG->libdir . '/externallib.php');
 require_once($CFG->libdir . '/gradelib.php');
 require_once(__DIR__ . '/../locallib.php');
-$blockdir = core_component::get_plugin_directory('block', 'dedication_atu');
+$blockdir = \core_component::get_plugin_directory('block', 'dedication_atu');
 require_once($blockdir . '/models/course.php');
 require_once($blockdir . '/lib.php');
 require_once($blockdir . '/config.php');
