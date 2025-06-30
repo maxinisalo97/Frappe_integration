@@ -337,7 +337,7 @@ public static function seguimiento_usuario($username, $courseid) {
     // 1) Validación
     $params = self::validate_parameters(
         new external_function_parameters([
-            'username' => new external_value(PARAM_ALPHANUMEXT, 'Username en Moodle'),
+            'username' => new external_value(PARAM_USERNAME, 'Username en Moodle'),
             'courseid' => new external_value(PARAM_INT,       'ID de curso'),
         ]),
         compact('username','courseid')
