@@ -5,6 +5,8 @@ defined('MOODLE_INTERNAL') || die();
 require_once($CFG->libdir . '/externallib.php');
 require_once($CFG->libdir . '/gradelib.php');
 require_once(__DIR__ . '/../locallib.php');
+require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
+require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
 
 global $CFG;
 
@@ -48,7 +50,8 @@ class external extends external_api {
             'course_user_info' => 'course_user_info',
             'obtener_clasificaciones_usuario'=> 'obtener_clasificaciones_usuario',
             'obtener_items_calificador' => 'obtener_items_calificador',
-            // Aquí puedes añadir más métodos: 'otro_metodo' => 'otro_internal'
+            'seguimiento_usuario'            => 'seguimiento_usuario',
+            'seguimiento_curso'              => 'seguimiento_curso',
         ];
 
         if (!isset($allowed[$params['method']])) {
@@ -318,6 +321,101 @@ public static function obtener_items_calificador($courseid) {
         'message' => ''
     ];
 }
+/**
+ * Devuelve el tiempo total (en segundos) y el avance de contenidos de un usuario.
+ * @param string $username
+ * @param int    $courseid
+ * @return array status,data,message
+ */
+public static function seguimiento_usuario($username, $courseid) {
+    global $DB, $CFG;
+    // 1) Validación
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'username' => new external_value(PARAM_ALPHANUMEXT, 'Username en Moodle'),
+            'courseid' => new external_value(PARAM_INT,       'ID de curso'),
+        ]),
+        compact('username','courseid')
+    );
+    // 2) Usuario
+    $user = $DB->get_record('user',
+        ['username'=>$params['username']], 'id', IGNORE_MISSING);
+    if (!$user) {
+        return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
+    }
+    // 3) Curso
+    if (!$DB->record_exists('course',['id'=>$params['courseid']])) {
+        return ['status'=>'error','data'=>null,'message'=>'Curso no existe'];
+    }
+    $course = $DB->get_record('course',['id'=>$params['courseid']]);
 
+    // 4) Tiempo dedicado: usamos el manager de dedication_atu
+    require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
+    require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
+    $mintime = $course->startdate;
+    $maxtime = time();
+    $limit   = BLOCK_DEDICATION_DEFAULT_SESSION_LIMIT;
+    $dm = new \block_dedication_atu_manager($course, $mintime, $maxtime, $limit);
+    $sessions = $dm->get_user_dedication_atu($user);
+    $totalsecs = 0;
+    foreach ($sessions as $s) {
+        $totalsecs += $s->dedicationtime;
+    }
+
+    // 5) Avance de contenidos: usamos courseModel
+    require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
+    $compinfo = \courseModel::getCompletions($params['courseid'], $user->id);
+    if ($compinfo['no_of_completions'] > 0) {
+        $percent = round($compinfo['no_of_completed'] / $compinfo['no_of_completions'] * 100, 2);
+    } else {
+        $percent = 0;
+    }
+
+    $data = [
+        'userid'               => $user->id,
+        'time_spent_seconds'   => $totalsecs,
+        'completed_activities' => $compinfo['no_of_completed'],
+        'total_activities'     => $compinfo['no_of_completions'],
+        'progress_percent'     => $percent,
+    ];
+
+    return ['status'=>'success','data'=>$data,'message'=>''];
+}
+
+/**
+ * Devuelve un listado con seguimiento (tiempo + avance) de todos los alumnos de un curso.
+ * @param int $courseid
+ * @return array status,data,message
+ */
+public static function seguimiento_curso($courseid) {
+    global $DB, $CFG;
+    // 1) Validación
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'courseid' => new external_value(PARAM_INT, 'ID de curso'),
+        ]),
+        compact('courseid')
+    );
+    // 2) Curso
+    if (!$DB->record_exists('course',['id'=>$params['courseid']])) {
+        return ['status'=>'error','data'=>null,'message'=>'Curso no existe'];
+    }
+    $course = $DB->get_record('course',['id'=>$params['courseid']]);
+
+    // 3) Lista de alumnos
+    $context  = \context_course::instance($course->id);
+    $students = get_enrolled_users($context, 'moodle/course:view', 0, 'u.id,u.username');
+
+    // 4) Reutilizamos el método anterior
+    $result = [];
+    foreach ($students as $stu) {
+        $resp = self::seguimiento_usuario($stu->username, $course->id);
+        if ($resp['status'] === 'success') {
+            $result[] = json_decode($resp['data'], true);
+        }
+    }
+
+    return ['status'=>'success','data'=>json_encode($result),'message'=>''];
+}
     
 }
