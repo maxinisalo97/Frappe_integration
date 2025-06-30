@@ -390,7 +390,8 @@ public static function seguimiento_usuario($username, $courseid) {
  * @return array status,data,message
  */
 public static function seguimiento_curso($courseid) {
-    global $DB, $CFG;
+    global $DB;
+
     // 1) Validación
     $params = self::validate_parameters(
         new external_function_parameters([
@@ -398,15 +399,17 @@ public static function seguimiento_curso($courseid) {
         ]),
         compact('courseid')
     );
+
     // 2) Curso
-    if (!$DB->record_exists('course',['id'=>$params['courseid']])) {
+    if (!$DB->record_exists('course', ['id' => $params['courseid']])) {
         return ['status'=>'error','data'=>null,'message'=>'Curso no existe'];
     }
-    $course = $DB->get_record('course',['id'=>$params['courseid']]);
+    $course = $DB->get_record('course', ['id' => $params['courseid']]);
 
-    // 3) Lista de alumnos
+    // 3) Lista de alumnos SIN filtrar por capacidad
     $context  = \context_course::instance($course->id);
-    $students = get_enrolled_users($context, 'moodle/course:view', 0, 'u.id,u.username');
+    // quita el parámetro de capability:
+    $students = get_enrolled_users($context);
 
     // 4) Reutilizamos el método anterior
     $result = [];
