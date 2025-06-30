@@ -3,6 +3,6 @@ defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_frappe_integration';
 $plugin->release = 'v0.0.122';
-$plugin->version   = 20250622171;   // YYYYMMDDXX
+$plugin->version   = 20250622172;   // YYYYMMDDXX
 $plugin->requires  = 2018051700;   
 $plugin->maturity  = MATURITY_ALPHA;

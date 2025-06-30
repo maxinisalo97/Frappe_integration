@@ -69,7 +69,10 @@ class external extends external_api {
         // Llama al método interno estático
         $internal = $allowed[$params['method']];
         // Tras el call_user_func_array en api():
-        $raw = call_user_func_array([self::class, $internal], $args);
+        $raw = call_user_func_array(
+            [self::class, $internal],
+            array_values($args)
+        );
 
         // Si $raw['data'] es array u object, serialízalo.
         if (is_array($raw['data']) || is_object($raw['data'])) {
@@ -356,26 +359,39 @@ public static function seguimiento_usuario($username, $courseid) {
     require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
     $mintime = $course->startdate;
     $maxtime = time();
-    $limit   = \BLOCK_DEDICATION_DEFAULT_SESSION_LIMIT;
-    $dm = new \block_dedication_atu_manager($course, $mintime, $maxtime, $limit);
+    $limit   = BLOCK_DEDICATION_DEFAULT_SESSION_LIMIT;
+    $dm      = new \block_dedication_atu_manager($course, $mintime, $maxtime, $limit);
+
+    // Recuperamos las sesiones sin resumirlas:
     $sessions = $dm->get_user_dedication_atu($user);
+
     $totalsecs = 0;
+    $sessions_data = [];
     foreach ($sessions as $s) {
         $totalsecs += $s->dedicationtime;
+        $sessions_data[] = [
+            'start_date' => userdate($s->start_date, '%Y-%m-%d %H:%M:%S'),
+            'duration_seconds' => $s->dedicationtime,
+            'ips' => $s->ips,
+        ];
     }
+    $sessioncount = count($sessions_data);
+    $meansecs     = $sessioncount ? round($totalsecs / $sessioncount, 2) : 0;
 
-    // 5) Avance de contenidos: usamos courseModel
+    // 5) Avance de contenidos
     require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
     $compinfo = \courseModel::getCompletions($params['courseid'], $user->id);
-    if ($compinfo['no_of_completions'] > 0) {
-        $percent = round($compinfo['no_of_completed'] / $compinfo['no_of_completions'] * 100, 2);
-    } else {
-        $percent = 0;
-    }
+    $percent  = $compinfo['no_of_completions']
+                ? round($compinfo['no_of_completed'] / $compinfo['no_of_completions'] * 100, 2)
+                : 0;
 
+    // Armamos la respuesta.
     $data = [
         'userid'               => $user->id,
         'time_spent_seconds'   => $totalsecs,
+        'session_count'        => $sessioncount,
+        'mean_session_seconds' => $meansecs,
+        'sessions'             => $sessions_data,
         'completed_activities' => $compinfo['no_of_completed'],
         'total_activities'     => $compinfo['no_of_completions'],
         'progress_percent'     => $percent,
