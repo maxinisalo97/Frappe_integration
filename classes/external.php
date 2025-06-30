@@ -5,8 +5,10 @@ defined('MOODLE_INTERNAL') || die();
 require_once($CFG->libdir . '/externallib.php');
 require_once($CFG->libdir . '/gradelib.php');
 require_once(__DIR__ . '/../locallib.php');
-require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
-require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
+$blockdir = core_component::get_plugin_directory('block', 'dedication_atu');
+require_once($blockdir . '/models/course.php');
+require_once($blockdir . '/lib.php');
+require_once($blockdir . '/config.php');
 
 global $CFG;
 
@@ -354,7 +356,7 @@ public static function seguimiento_usuario($username, $courseid) {
     require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
     $mintime = $course->startdate;
     $maxtime = time();
-    $limit   = BLOCK_DEDICATION_DEFAULT_SESSION_LIMIT;
+    $limit   = \BLOCK_DEDICATION_DEFAULT_SESSION_LIMIT;
     $dm = new \block_dedication_atu_manager($course, $mintime, $maxtime, $limit);
     $sessions = $dm->get_user_dedication_atu($user);
     $totalsecs = 0;
