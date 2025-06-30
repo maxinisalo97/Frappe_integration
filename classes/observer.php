@@ -4,7 +4,7 @@ defined('MOODLE_INTERNAL') || die();
 use local_frappe_integration\task\send_frappe_event;
 use core\task\manager;
 require_once($CFG->libdir . '/filelib.php');
-// Al principio del archivo observer.php, añade:
+require_once(__DIR__ . '/../locallib.php');
 global $CFG;
 
 
@@ -18,8 +18,6 @@ class observer {
 
     protected static function enqueue_frappe_event(array $payload_data) {
         // 1) Log al entrar
-        error_log('Frappe Integration: enqueue_frappe_event → inicio. Acción: '
-            . ($payload_data['action'] ?? 'n/a'));
     
         $task = new \local_frappe_integration\task\send_frappe_event();
         $task->set_custom_data($payload_data);
@@ -27,11 +25,13 @@ class observer {
         try {
             \core\task\manager::queue_adhoc_task($task);
             // 2) Log si no ha saltado excepción
-            error_log('Frappe Integration: enqueue_frappe_event → task encolada correctamente.');
         } catch (\Throwable $e) {
-            // 3) Si hay fallo, lo capturamos
-            error_log('Frappe Integration: enqueue_frappe_event → ¡ERROR al encolar!: '
-                . $e->getMessage());
+            $message = 'Frappe Integration: enqueue_frappe_event → ¡ERROR al encolar!: ' . $e->getMessage();
+            \local_frappe_integration\event\frappe_error::create([
+                'context' => \context_system::instance(),
+                'other'   => ['message' => $message]
+            ])->trigger();
+
         }
     }
     
@@ -48,11 +48,9 @@ public static function notify_frappe(array $payload_data) {
     $token   = get_config('local_frappe_integration', 'frappe_api_token');
 
     if (empty($baseurl)) {
-        error_log('Frappe Integration: Frappe API URL is not configured.');
         return false;
     }
     if (empty($token)) {
-        error_log('Frappe Integration: Frappe API Token is not configured.');
         return false;
     }
 
@@ -64,7 +62,11 @@ public static function notify_frappe(array $payload_data) {
     // 3. Codificamos a JSON
     $jsonpayload = json_encode($payload);
     if ($jsonpayload === false) {
-        error_log('Frappe Integration: json_encode error: ' . json_last_error_msg());
+        $message = 'Frappe Integration: json_encode error: ' . json_last_error_msg();
+        \local_frappe_integration\event\frappe_error::create([
+            'context' => \context_system::instance(),
+            'other'   => ['message' => $message]
+        ])->trigger();
         return false;
     }
 
@@ -83,32 +85,35 @@ public static function notify_frappe(array $payload_data) {
         );
         $http_status = $curl->get_info(CURLINFO_HTTP_CODE);
 
-        // 5. Logs para depurar
-        error_log(sprintf(
-            'Frappe Integration: Sent JSON to %s → HTTP %d',
-            $url,
-            $http_status
-        ));
-        error_log('Frappe Integration: JSON payload: ' . $jsonpayload);
-        error_log('Frappe Integration: Response body: ' . $response_body);
+        $response = json_decode($response_body, true);
 
-        if ($http_status >= 200 && $http_status < 300) {
+        // Condición de éxito: HTTP OK *y* status interno = "success"
+        if (
+            ($http_status >= 200 && $http_status < 300)
+            || isset($response['message']['status'])
+            && $response['message']['status'] === 'success'
+        ) {
             return $response_body;
-        } else {
-            error_log(sprintf(
-                'Frappe Integration: Error from Frappe API. Status: %d. URL: %s. Response: %s',
-                $http_status,
-                $url,
-                $response_body
-            ));
-            return false;
         }
+        \local_frappe_integration\event\frappe_error::create([
+            'context' => \context_system::instance(),
+            'other'   => ['message' => "HTTP {$http_status}, status interno: ".
+                             ($response['message']['status'] ?? 'n/d')]
+        ])->trigger();
+        return false;
 
     } catch (\curl_exception $e) {
-        error_log('Frappe Integration: cURL exception: ' . $e->getMessage());
+            \local_frappe_integration\event\frappe_error::create([
+                'context' => \context_system::instance(),
+                'other'   => ['message' => $e->getMessage()]
+            ])->trigger();
+
         return false;
     } catch (\Exception $e) {
-        error_log('Frappe Integration: General exception during notify_frappe: ' . $e->getMessage());
+        \local_frappe_integration\event\frappe_error::create([
+            'context' => \context_system::instance(),
+            'other'   => ['message' => $e->getMessage()]
+        ])->trigger();
         return false;
     }
 }
@@ -125,7 +130,6 @@ public static function notify_frappe(array $payload_data) {
             IGNORE_MISSING
         );
         if (!$user_record || empty($user_record->username)) {
-            error_log("Frappe Integration (user_loggedout): User with ID {$userid} not found. Skipping.");
             return;
         }
     
@@ -148,7 +152,6 @@ public static function notify_frappe(array $payload_data) {
         $user_record = $DB->get_record('user', ['id' => $userid], 'id, username, lastlogin', IGNORE_MISSING);
 
         if (!$user_record || empty($user_record->username)) {
-            error_log("Frappe Integration (user_loggedin): User with ID {$userid} not found or has no username. Skipping.");
             return;
         }
         
@@ -181,7 +184,6 @@ public static function notify_frappe(array $payload_data) {
 
         // Excluimos usuarios no encontrados, sin username, o el usuario invitado
         if (!$user_record || empty($user_record->username) || $user_record->username === 'guest') {
-            error_log("Frappe Integration (course_viewed): User with ID {$userid_viewing} not found, has no username, or is guest for course {$courseid_viewed}. Skipping notification.");
             return;
         }
         $username_viewing = $user_record->username;
@@ -192,8 +194,7 @@ public static function notify_frappe(array $payload_data) {
 
         // Verificar que obtuvimos información válida antes de fusionar
         if ($course_specific_info === false || !is_array($course_specific_info)) {
-            error_log("Frappe Integration (course_viewed): Failed to get course_user_info for user '{$username_viewing}' (ID: {$userid_viewing}) and course '{$courseid_viewed}'. Skipping notification.");
-            // Podrías decidir enviar datos parciales si es apropiado, o no enviar nada:
+            
             return;
         }
 
@@ -216,7 +217,7 @@ public static function notify_frappe(array $payload_data) {
 
         $username = $DB->get_field('user', 'username', ['id' => $userid]);
         if (!$username) {
-            error_log("Frappe Integration: Usuario no encontrado ID $userid");
+            
             return;
         }
 
@@ -235,6 +236,87 @@ public static function notify_frappe(array $payload_data) {
         ]);
 
         self::enqueue_frappe_event($payload_completo);
-        error_log("Frappe Integration - Payload Completo: " . count($payload_completo['grades']) . " notas enviadas.");
+       
     }
+    /**
+ * Evento: un ítem de calificación ha sido creado en el gradebook.
+ */
+public static function grade_item_created(\core\event\grade_item_created $event) {
+    global $DB;
+    $data = $event->get_data();
+    // El ID del curso suele venir en contextinstanceid
+    $courseid = (int)$data['contextinstanceid'];
+    $itemid   = (int)$data['objectid'];
+
+    // 1) Llamamos a tu endpoint interno para obtener todos los ítems
+    $items_response = external::obtener_items_calificador($courseid);
+    if ($items_response['status'] !== 'success') {
+        return;
+    }
+
+    // 2) Preparamos el payload
+    $payload = [
+        'action'        => 'grade_item_created',
+        'moodle_domain' => self::get_moodle_domain(),
+        'courseid'      => $courseid,
+        'itemid'        => $itemid,
+        'items' => $items_response['data'],
+        'timestamp'     => $event->timecreated,
+    ];
+
+    // 3) Encolamos la notificación
+    self::enqueue_frappe_event($payload);
+}
+
+/**
+ * Evento: un ítem de calificación ha sido modificado.
+ */
+public static function grade_item_updated(\core\event\grade_item_updated $event) {
+    global $DB;
+    $data = $event->get_data();
+    $courseid = (int)$data['contextinstanceid'];
+    $itemid   = (int)$data['objectid'];
+
+    $items_response = external::obtener_items_calificador($courseid);
+    if ($items_response['status'] !== 'success') {
+        return;
+    }
+
+    $payload = [
+        'action'        => 'grade_item_updated',
+        'moodle_domain' => self::get_moodle_domain(),
+        'courseid'      => $courseid,
+        'itemid'        => $itemid,
+        'items' => $items_response['data'],
+        'timestamp'     => $event->timecreated,
+    ];
+
+    self::enqueue_frappe_event($payload);
+}
+
+/**
+ * Evento: un ítem de calificación ha sido eliminado.
+ */
+public static function grade_item_deleted(\core\event\grade_item_deleted $event) {
+    global $DB;
+    $data = $event->get_data();
+    $courseid = (int)$data['contextinstanceid'];
+    $itemid   = (int)$data['objectid'];
+
+    $items_response = external::obtener_items_calificador($courseid);
+    if ($items_response['status'] !== 'success') {
+        return;
+    }
+
+    $payload = [
+        'action'        => 'grade_item_deleted',
+        'moodle_domain' => self::get_moodle_domain(),
+        'courseid'      => $courseid,
+        'itemid'        => $itemid,
+        'items' => $items_response['data'],
+        'timestamp'     => $event->timecreated,
+    ];
+
+    self::enqueue_frappe_event($payload);
+}
 }

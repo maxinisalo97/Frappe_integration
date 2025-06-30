@@ -4,6 +4,7 @@ defined('MOODLE_INTERNAL') || die();
 
 require_once($CFG->libdir . '/externallib.php');
 require_once($CFG->libdir . '/gradelib.php');
+require_once(__DIR__ . '/../locallib.php');
 
 global $CFG;
 
@@ -46,6 +47,7 @@ class external extends external_api {
         $allowed = [
             'course_user_info' => 'course_user_info',
             'obtener_clasificaciones_usuario'=> 'obtener_clasificaciones_usuario',
+            'obtener_items_calificador' => 'obtener_items_calificador',
             // Aquí puedes añadir más métodos: 'otro_metodo' => 'otro_internal'
         ];
 
@@ -257,6 +259,65 @@ class external extends external_api {
     
         return ['status'=>'success','data'=>$rows,'message'=>''];
     }
-    
+    /**
+ * Método interno: obtener_items_calificador
+ *   Parámetros: ['courseid' => int]
+ * Devuelve: lista de ítems de calificación del curso ordenados
+ */
+public static function obtener_items_calificador($courseid) {
+    global $DB, $CFG;
+
+    // 1) Validación de parámetros
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'courseid' => new external_value(PARAM_INT, 'ID de curso'),
+        ]),
+        compact('courseid')
+    );
+
+    // 2) Comprobar que el curso existe
+    if (!$DB->record_exists('course', ['id' => $params['courseid']])) {
+        return ['status'=>'error','data'=>null,'message'=>'Curso no existe'];
+    }
+
+    // 3) Cargar librería de Gradebook
+    require_once($CFG->libdir . '/grade/grade_item.php');
+
+    // 4) Recuperar todos los ítems de calificación del curso
+    $gradeitems = \grade_item::fetch_all(['courseid' => $params['courseid']]);
+    if (empty($gradeitems)) {
+        return ['status'=>'error','data'=>null,'message'=>'No hay ítems de calificación en el curso'];
+    }
+
+    // 5) Ordenar por sortorder
+    usort($gradeitems, function($a, $b) {
+        return $a->sortorder - $b->sortorder;
+    });
+
+    // 6) Formatear resultado
+    $rows = [];
+    foreach ($gradeitems as $gi) {
+        if ($gi->itemtype === 'course') {
+            continue;  // omitimos el Total del curso
+        }
+        $rows[] = [
+            'id'              => $gi->id,
+            'itemname'        => $gi->get_name(false),
+            'itemtype'        => $gi->itemtype,
+            'aggregationcoef' => (float)$gi->aggregationcoef,
+            'grademin'        => $gi->grademin,
+            'grademax'        => $gi->grademax,
+            'sortorder'       => $gi->sortorder,
+        ];
+    }
+
+    // 7) Devolver respuesta
+    return [
+        'status'  => 'success',
+        'data'    => $rows,
+        'message' => ''
+    ];
+}
+
     
 }

@@ -19,4 +19,16 @@ $observers = [
             'eventname' => '\core\event\user_graded',
             'callback'  => 'local_frappe_integration\observer::user_graded',
         ],
+        [
+            'eventname' => '\core\event\grade_item_created',
+            'callback'  => 'local_frappe_integration\observer::grade_item_created',
+          ],
+          [
+            'eventname' => '\core\event\grade_item_updated',
+            'callback'  => 'local_frappe_integration\observer::grade_item_updated',
+          ],
+          [
+            'eventname' => '\core\event\grade_item_deleted',
+            'callback'  => 'local_frappe_integration\observer::grade_item_deleted',
+          ],
 ];
