@@ -416,7 +416,7 @@ public static function seguimiento_curso($courseid) {
     foreach ($students as $stu) {
         $resp = self::seguimiento_usuario($stu->username, $course->id);
         if ($resp['status'] === 'success') {
-            $result[] = json_decode($resp['data'], true);
+            $result[] = $resp['data'];
         }
     }
 
