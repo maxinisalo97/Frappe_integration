@@ -387,26 +387,69 @@ public static function seguimiento_usuario($username, $courseid) {
     $total      = isset($compinfo['activities']) ? count($compinfo['activities']) : 0;
     $percent    = $total ? round($completed / $total * 100, 2) : 0;
 
-    // 6) Ítems de prueba y notas con courseModel
-    $pruebas    = \courseModel::obtener_pruebas();
-    $_notas     = \courseModel::obtener_notas_alumno($user->id,'');
-    $items_list = [];
-    $user_grades= [];
+// 6) Ítems de prueba y notas con filtro por clave
+$clave = 'prueba';  // o la cadena que quieras buscar en el nombre
 
-    foreach ($pruebas as $prueba) {
-        $items_list[] = [
-            'id'   => $prueba->id_examen,
-            'name' => $prueba->nombre_prueba,
-            'type' => $prueba->tipo_prueba,
-        ];
-        $nota = isset($_notas[$prueba->id_examen])
-                ? $_notas[$prueba->id_examen]->Nota
-                : null;
-        $user_grades[] = [
-            'itemid'      => $prueba->id_examen,
-            'final_grade' => $nota,
-        ];
-    }
+// a) Obtenemos solo los ítems cuyo nombre contenga la clave
+$sql_items = "
+    SELECT
+        gi.id           AS id_examen,
+        gi.itemtype     AS tipo_prueba,
+        gi.itemname     AS nombre_prueba
+    FROM {grade_items} gi
+    WHERE gi.courseid = :courseid
+";
+$params_items = ['courseid' => $course->id];
+
+if ($clave !== '') {
+    $sql_items .= " AND gi.itemname LIKE :like";
+    $params_items['like'] = "%{$clave}%";
+}
+
+$sql_items .= " ORDER BY gi.sortorder";
+$pruebas = $DB->get_records_sql($sql_items, $params_items);
+
+// b) Obtenemos las notas solo para esos ítems filtrados
+$sql_notas = "
+    SELECT
+        gi.id                   AS id_examen,
+        ROUND(gg.finalgrade, 2) AS Nota
+    FROM {grade_items} gi
+    JOIN {grade_grades} gg
+      ON gg.itemid = gi.id
+    WHERE gi.courseid = :courseid
+      AND gg.userid   = :userid
+";
+$params_notas = [
+    'courseid' => $course->id,
+    'userid'   => $user->id,
+];
+
+if ($clave !== '') {
+    $sql_notas .= " AND gi.itemname LIKE :like";
+    // reutilizamos el mismo nombre de parámetro o lo renombramos si prefieres
+    $params_notas['like'] = "%{$clave}%";
+}
+
+$_notas = $DB->get_records_sql($sql_notas, $params_notas);
+
+// c) Montamos los arrays de salida
+$items_list  = [];
+$user_grades = [];
+
+foreach ($pruebas as $prueba) {
+    $items_list[] = [
+        'id'   => $prueba->id_examen,
+        'name' => $prueba->nombre_prueba,
+        'type' => $prueba->tipo_prueba,
+    ];
+    $user_grades[] = [
+        'itemid'      => $prueba->id_examen,
+        'final_grade' => isset($_notas[$prueba->id_examen])
+                         ? $_notas[$prueba->id_examen]->Nota
+                         : null,
+    ];
+}
 
     // 7) Montaje de la respuesta
     $data = [
