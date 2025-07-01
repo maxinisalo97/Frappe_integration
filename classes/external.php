@@ -388,7 +388,7 @@ public static function seguimiento_usuario($username, $courseid) {
     $total      = isset($compinfo['activities']) ? count($compinfo['activities']) : 0;
     $percent    = $total ? round($completed / $total * 100, 2) : 0;
 
-// 6) Ítems de prueba y notas con filtro por clave
+// 6) Ítems de prueba y notas con filtro 
 $clave = 'prueba';  // la palabra que buscas en el nombre
 
 $sql = "
