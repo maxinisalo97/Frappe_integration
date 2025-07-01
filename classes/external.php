@@ -334,20 +334,23 @@ public static function obtener_items_calificador($courseid) {
  */
 public static function seguimiento_usuario($username, $courseid) {
     global $DB, $CFG;
-    // 1) Validación
+
+    // 1) Validación de parámetros
     $params = self::validate_parameters(
         new external_function_parameters([
             'username' => new external_value(PARAM_USERNAME, 'Username en Moodle'),
-            'courseid' => new external_value(PARAM_INT,       'ID de curso'),
+            'courseid' => new external_value(PARAM_INT,      'ID de curso'),
         ]),
         compact('username','courseid')
     );
+
     // 2) Usuario
     $user = $DB->get_record('user',
-        ['username'=>$params['username']], 'id', IGNORE_MISSING);
+        ['username' => $params['username']], 'id', IGNORE_MISSING);
     if (!$user) {
         return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
     }
+
     // 3) Curso
     if (!$DB->record_exists('course',['id'=>$params['courseid']])) {
         return ['status'=>'error','data'=>null,'message'=>'Curso no existe'];
@@ -363,8 +366,9 @@ public static function seguimiento_usuario($username, $courseid) {
     $dm      = new \block_dedication_atu_manager($course, $mintime, $maxtime, $limit);
 
     $sessions = $dm->get_user_dedication_atu($user);
-    $totalsecs = 0;
+    $totalsecs     = 0;
     $sessions_data = [];
+
     foreach ($sessions as $s) {
         $totalsecs += $s->dedicationtime;
         $sessions_data[] = [
@@ -373,64 +377,47 @@ public static function seguimiento_usuario($username, $courseid) {
             'ips'              => $s->ips,
         ];
     }
+
     $sessioncount = count($sessions_data);
     $meansecs     = $sessioncount ? round($totalsecs / $sessioncount, 2) : 0;
 
     // 5) Avance de contenidos
-    $compinfo = \courseModel::getCompletions($params['courseid'], $user->id);
-    $percent  = $compinfo['no_of_completions']
-                ? round($compinfo['no_of_completed'] / $compinfo['no_of_completions'] * 100, 2)
-                : 0;
+    $compinfo   = \courseModel::getCompletions($params['courseid'], $user->id);
+    $completed  = $compinfo['no_of_completed'];
+    // aquí corregimos el total de actividades:
+    $total      = isset($compinfo['activities']) ? count($compinfo['activities']) : 0;
+    $percent    = $total ? round($completed / $total * 100, 2) : 0;
 
-    // 6) Ítems de calificación y notas del usuario
-    // a) Todos los ítems del gradebook del curso
-    $gradeitems = \grade_item::fetch_all(['courseid' => $params['courseid']]);
+    // 6) Ítems de prueba y notas con courseModel
+    $pruebas    = \courseModel::obtener_pruebas('prueba');
+    $_notas     = \courseModel::obtener_notas_alumno($user->id, 'prueba');
     $items_list = [];
-    foreach ($gradeitems as $gi) {
-        if ($gi->itemtype === 'course') {
-            continue; // omitimos el total del curso
-        }
+    $user_grades= [];
+
+    foreach ($pruebas as $prueba) {
         $items_list[] = [
-            'id'          => $gi->id,
-            'name'        => $gi->get_name(false),
-            'grademin'    => $gi->grademin,
-            'grademax'    => $gi->grademax,
-            'sortorder'   => $gi->sortorder,
+            'id'   => $prueba->id_examen,
+            'name' => $prueba->nombre_prueba,
+            'type' => $prueba->tipo_prueba,
+        ];
+        $nota = isset($_notas[$prueba->id_examen])
+                ? $_notas[$prueba->id_examen]->Nota
+                : null;
+        $user_grades[] = [
+            'itemid'      => $prueba->id_examen,
+            'final_grade' => $nota,
         ];
     }
 
-    // b) Notas del usuario en esos ítems
-    $user_grades = [];
-    foreach ($gradeitems as $gi) {
-        if ($gi->itemtype === 'course') {
-            continue;
-        }
-        $gg = \grade_grade::fetch(['itemid'=>$gi->id,'userid'=>$user->id], IGNORE_MISSING);
-        if ($gg) {
-            $raw       = $gg->rawgrade;
-            $final     = $gg->finalgrade;
-            $percentage = ($raw !== null && $gi->grademax > $gi->grademin)
-                          ? round((($raw - $gi->grademin)/($gi->grademax-$gi->grademin))*100, 2)
-                          : null;
-            $user_grades[] = [
-                'itemid'        => $gi->id,
-                'raw_grade'     => $raw,
-                'final_grade'   => $final,
-                'percentage'    => $percentage,
-                'feedback'      => $gg->feedback,
-            ];
-        }
-    }
-
-    // Armamos la respuesta.
+    // 7) Montaje de la respuesta
     $data = [
         'userid'               => $user->id,
         'time_spent_seconds'   => $totalsecs,
         'session_count'        => $sessioncount,
         'mean_session_seconds' => $meansecs,
         'sessions'             => $sessions_data,
-        'completed_activities' => $compinfo['no_of_completed'],
-        'total_activities'     => $compinfo['no_of_completions'],
+        'completed_activities' => $completed,
+        'total_activities'     => $total,
         'progress_percent'     => $percent,
         'grade_items'          => $items_list,
         'user_grades'          => $user_grades,
@@ -438,6 +425,8 @@ public static function seguimiento_usuario($username, $courseid) {
 
     return ['status'=>'success','data'=>$data,'message'=>''];
 }
+
+
 
 /**
  * Devuelve un listado con seguimiento (tiempo + avance) de todos los alumnos de un curso.
