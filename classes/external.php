@@ -527,11 +527,10 @@ public static function generar_excel_seguimiento($courseid) {
     $context  = \context_course::instance($course->id);
     $students = get_enrolled_users($context);
 
-    // 6) Obtener las filas de datos (cada fila puede ser stdClass o array)
+    // 6) Obtener las filas de datos (cada fila puede venir como stdClass o array)
     $rows = $dm->get_students_dedication_atu($students);
 
     // 7) Reconstruir las cabeceras (igual que en el bloque)
-    //    - Recupero las pruebas mediante consulta SQL
     $clave = 'prueba';
     $sql_items = "
         SELECT
@@ -565,15 +564,27 @@ public static function generar_excel_seguimiento($courseid) {
     $cabeceras[] = 'CONJUNTO';
 
     // 8) Preparar el array completo de exportación
-    //    — convertimos cada fila a un array indexado para evitar stdClass en download
     $exportrows = [];
+    // Primero las cabeceras
     $exportrows[] = $cabeceras;
+
+    // Luego cada fila de datos, garantizando que todas las celdas sean cadenas
     foreach ($rows as $row) {
+        // 1) Si viene como objeto, lo convertimos a array
         if (is_object($row)) {
             $row = (array)$row;
         }
-        // tomamos solo los valores en orden numérico
-        $exportrows[] = array_values($row);
+        $flat = [];
+        foreach ($row as $cell) {
+            if (is_object($cell) || is_array($cell)) {
+                // Serializamos objetos o arrays a JSON
+                $flat[] = json_encode($cell);
+            } else {
+                // Forzamos todo a string (NULL → "")
+                $flat[] = (string)$cell;
+            }
+        }
+        $exportrows[] = $flat;
     }
 
     // 9) Generar el Excel y capturarlo en un buffer
