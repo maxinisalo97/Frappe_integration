@@ -460,39 +460,56 @@ foreach ($records as $r) {
  * @param int $courseid
  * @return array status,data,message
  */
-public static function seguimiento_curso($courseid) {
-    global $DB;
+public static function seguimiento_curso($courseid, $groupid = 0) {
+    global $DB, $CFG;
 
     // 1) Validación
     $params = self::validate_parameters(
         new external_function_parameters([
             'courseid' => new external_value(PARAM_INT, 'ID de curso'),
+            'groupid'  => new external_value(PARAM_INT, 'ID de grupo (0 = todos)', VALUE_DEFAULT, 0),
         ]),
-        compact('courseid')
+        compact('courseid','groupid')
     );
 
     // 2) Curso
     if (!$DB->record_exists('course', ['id' => $params['courseid']])) {
         return ['status'=>'error','data'=>null,'message'=>'Curso no existe'];
     }
-    $course = $DB->get_record('course', ['id' => $params['courseid']]);
+    $course = $DB->get_record('course', ['id' => $params['courseid']], '*', MUST_EXIST);
 
-    // 3) Lista de alumnos SIN filtrar por capacidad
-    $context  = \context_course::instance($course->id);
-    // quita el parámetro de capability:
-    $students = get_enrolled_users($context);
+    // 3) Contexto
+    $context = \context_course::instance($course->id);
 
-    // 4) Reutilizamos el método anterior
+    // 4) Si nos piden un grupo concreto, comprobamos que exista y pertenece al curso
+    if ($params['groupid'] > 0) {
+        if (!$DB->record_exists('groups', ['id' => $params['groupid'], 'courseid' => $course->id])) {
+            return ['status'=>'error','data'=>null,'message'=>'Grupo no existe en este curso'];
+        }
+    }
+
+    // 5) Recuperar usuarios: si groupid>0 pasamos ese parm a get_enrolled_users()
+    if ($params['groupid'] > 0) {
+        // Esta función obtiene usuarios matriculados en el curso y en el grupo
+        $students = get_enrolled_users($context, '', $params['groupid']);
+    } else {
+        // Todos los usuarios matriculados en el curso
+        $students = get_enrolled_users($context);
+    }
+
+    // 6) Reutilizamos el método por usuario
     $result = [];
     foreach ($students as $stu) {
         $resp = self::seguimiento_usuario($stu->username, $course->id);
         if ($resp['status'] === 'success') {
+            // ya viene en array, no hace falta json_encode aquí
             $result[] = $resp['data'];
         }
     }
 
-    return ['status'=>'success','data'=>json_encode($result),'message'=>''];
+    return ['status'=>'success','data'=>$result,'message'=>''];
 }
+
     /**
  * Método interno: generar_excel_seguimiento
  *   Parámetros: ['courseid' => int]
