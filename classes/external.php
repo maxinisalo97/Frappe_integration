@@ -54,6 +54,7 @@ class external extends external_api {
             'obtener_items_calificador' => 'obtener_items_calificador',
             'seguimiento_usuario'            => 'seguimiento_usuario',
             'seguimiento_curso'              => 'seguimiento_curso',
+            'generar_excel_seguimiento'      => 'generar_excel_seguimiento',
         ];
 
         if (!isset($allowed[$params['method']])) {
@@ -388,66 +389,50 @@ public static function seguimiento_usuario($username, $courseid) {
     $percent    = $total ? round($completed / $total * 100, 2) : 0;
 
 // 6) Ítems de prueba y notas con filtro por clave
-$clave = 'prueba';  // o la cadena que quieras buscar en el nombre
+$clave = 'prueba';  // la palabra que buscas en el nombre
 
-// a) Obtenemos solo los ítems cuyo nombre contenga la clave
-$sql_items = "
+$sql = "
     SELECT
-        gi.id           AS id_examen,
-        gi.itemtype     AS tipo_prueba,
-        gi.itemname     AS nombre_prueba
+      gi.id                    AS id_examen,
+      gi.itemtype              AS tipo_prueba,
+      gi.itemname              AS nombre_prueba,
+      ROUND(
+        COALESCE(
+          gg.finalgrade,   /* Moodle 4+ */
+          gg.rawgrade      /* Moodle <4 */
+        ),
+        2
+      )                        AS Nota
     FROM {grade_items} gi
-    WHERE gi.courseid = :courseid
-";
-$params_items = ['courseid' => $course->id];
-
-if ($clave !== '') {
-    $sql_items .= " AND gi.itemname LIKE :like";
-    $params_items['like'] = "%{$clave}%";
-}
-
-$sql_items .= " ORDER BY gi.sortorder";
-$pruebas = $DB->get_records_sql($sql_items, $params_items);
-
-// b) Obtenemos las notas solo para esos ítems filtrados
-$sql_notas = "
-    SELECT
-        gi.id                   AS id_examen,
-        ROUND(gg.finalgrade, 2) AS Nota
-    FROM {grade_items} gi
-    JOIN {grade_grades} gg
+    LEFT JOIN {grade_grades} gg
       ON gg.itemid = gi.id
+     AND gg.userid = :userid
     WHERE gi.courseid = :courseid
-      AND gg.userid   = :userid
+      AND gi.itemname LIKE :like
+    ORDER BY gi.sortorder
 ";
-$params_notas = [
+
+$params = [
     'courseid' => $course->id,
     'userid'   => $user->id,
+    'like'     => "%{$clave}%",
 ];
 
-if ($clave !== '') {
-    $sql_notas .= " AND gi.itemname LIKE :like";
-    // reutilizamos el mismo nombre de parámetro o lo renombramos si prefieres
-    $params_notas['like'] = "%{$clave}%";
-}
+$records = $DB->get_records_sql($sql, $params);
 
-$_notas = $DB->get_records_sql($sql_notas, $params_notas);
-
-// c) Montamos los arrays de salida
+// Montamos los arrays de salida
 $items_list  = [];
 $user_grades = [];
 
-foreach ($pruebas as $prueba) {
+foreach ($records as $r) {
     $items_list[] = [
-        'id'   => $prueba->id_examen,
-        'name' => $prueba->nombre_prueba,
-        'type' => $prueba->tipo_prueba,
+        'id'   => $r->id_examen,
+        'name' => $r->nombre_prueba,
+        'type' => $r->tipo_prueba,
     ];
     $user_grades[] = [
-        'itemid'      => $prueba->id_examen,
-        'final_grade' => isset($_notas[$prueba->id_examen])
-                         ? $_notas[$prueba->id_examen]->Nota
-                         : null,
+        'itemid'      => $r->id_examen,
+        'final_grade' => $r->Nota,  // null si no tiene nota
     ];
 }
 
@@ -508,5 +493,55 @@ public static function seguimiento_curso($courseid) {
 
     return ['status'=>'success','data'=>json_encode($result),'message'=>''];
 }
-    
+    /**
+ * Método interno: generar_excel_seguimiento
+ *   Parámetros: ['courseid' => int]
+ * Devuelve el fichero Excel binario del Resumen de Evaluación ATU.
+ */
+public static function generar_excel_seguimiento($courseid) {
+    global $DB, $CFG;
+
+    // 1) Validación
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'courseid' => new external_value(PARAM_INT, 'ID de curso'),
+        ]),
+        compact('courseid')
+    );
+
+    // 2) Recuperar curso
+    $course = $DB->get_record('course', ['id' => $params['courseid']], '*', MUST_EXIST);
+
+    // 3) Cargar lógica del bloque
+    require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
+    require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
+
+    // 4) Instanciar el manager con valores por defecto
+    $mintime = $course->startdate;
+    $maxtime = time();
+    $limit   = BLOCK_DEDICATION_DEFAULT_SESSION_LIMIT;
+    $dm = new \block_dedication_atu_manager($course, $mintime, $maxtime, $limit);
+
+    // 5) Recuperar todos los estudiantes matriculados
+    $context  = \context_course::instance($course->id);
+    $students = get_enrolled_users($context);
+
+    // 6) Generar los datos de fila exactamente como lo hace el bloque
+    $rows = $dm->get_students_dedication_atu($students);
+
+    // 7) Capturar en buffer la salida de download_students_pruebas()
+    ob_start();
+    $dm->download_students_pruebas(array_merge(
+        [ $dm->get_export_headers() ], // primera fila de cabeceras (nombre, apellido, DNI, etc)
+        $rows
+    ));
+    $excel = ob_get_clean();
+
+    // 8) Devolver el binario crudo
+    return [
+        'status'  => 'success',
+        'data'    => $excel,
+        'message' => ''
+    ];
+}
 }
