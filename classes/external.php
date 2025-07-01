@@ -356,7 +356,6 @@ public static function seguimiento_usuario($username, $courseid) {
         return ['status'=>'error','data'=>null,'message'=>'Curso no existe'];
     }
     $course = $DB->get_record('course',['id'=>$params['courseid']]);
-
     // 4) Tiempo dedicado
     require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
     require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
@@ -388,9 +387,21 @@ public static function seguimiento_usuario($username, $courseid) {
     $total      = isset($compinfo['activities']) ? count($compinfo['activities']) : 0;
     $percent    = $total ? round($completed / $total * 100, 2) : 0;
 
-    // 6) Ítems de prueba y notas con courseModel
-    $pruebas    = \courseModel::obtener_pruebas('prueba');
-    $_notas     = \courseModel::obtener_notas_alumno($user->id, 'prueba');
+    // Guardamos el valor actual (posiblemente nulo).
+    $oldCOURSE = isset($COURSE) ? $COURSE : null;
+    // Inyectamos nuestro curso
+    $COURSE = $course;
+
+    // Llamadas que dependen de global $COURSE:
+    $pruebas = \courseModel::obtener_pruebas('prueba');
+    $_notas  = \courseModel::obtener_notas_alumno($user->id, 'prueba');
+
+    // Restauramos
+    if ($oldCOURSE !== null) {
+        $COURSE = $oldCOURSE;
+    } else {
+        unset($COURSE);
+    }
     $items_list = [];
     $user_grades= [];
 
