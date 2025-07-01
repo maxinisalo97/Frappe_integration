@@ -527,7 +527,7 @@ public static function generar_excel_seguimiento($courseid) {
     $context  = \context_course::instance($course->id);
     $students = get_enrolled_users($context);
 
-    // 6) Obtener las filas de datos (cada fila es un array)
+    // 6) Obtener las filas de datos (cada fila puede ser stdClass o array)
     $rows = $dm->get_students_dedication_atu($students);
 
     // 7) Reconstruir las cabeceras (igual que en el bloque)
@@ -565,10 +565,16 @@ public static function generar_excel_seguimiento($courseid) {
     $cabeceras[] = 'CONJUNTO';
 
     // 8) Preparar el array completo de exportación
-    $exportrows = array_merge(
-        [ $cabeceras ],
-        $rows
-    );
+    //    — convertimos cada fila a un array indexado para evitar stdClass en download
+    $exportrows = [];
+    $exportrows[] = $cabeceras;
+    foreach ($rows as $row) {
+        if (is_object($row)) {
+            $row = (array)$row;
+        }
+        // tomamos solo los valores en orden numérico
+        $exportrows[] = array_values($row);
+    }
 
     // 9) Generar el Excel y capturarlo en un buffer
     ob_start();
@@ -582,6 +588,5 @@ public static function generar_excel_seguimiento($courseid) {
         'message' => ''
     ];
 }
-
 
 }
