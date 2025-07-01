@@ -402,7 +402,7 @@ $sql = "
           gg.rawgrade      /* Moodle <4 */
         ),
         2
-      )                        AS Nota
+      )                        AS nota
     FROM {grade_items} gi
     LEFT JOIN {grade_grades} gg
       ON gg.itemid = gi.id
@@ -432,7 +432,7 @@ foreach ($records as $r) {
     ];
     $user_grades[] = [
         'itemid'      => $r->id_examen,
-        'final_grade' => $r->Nota,  // null si no tiene nota
+        'final_grade' => $r->nota,  // null si no tiene nota
     ];
 }
 
