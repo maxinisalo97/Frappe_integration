@@ -4,6 +4,8 @@ defined('MOODLE_INTERNAL') || die();
 
 use core\task\adhoc_task;
 use local_frappe_integration\observer;
+use local_frappe_integration\event\frappe_error;
+use context_system;
 
 class send_frappe_event extends adhoc_task {
     /**
@@ -17,25 +19,28 @@ class send_frappe_event extends adhoc_task {
      * Ejecuta la tarea: aquí sí mandamos el POST.
      */
     public function execute() {
-        // Intentamos obtener el data
         $payload = (array)$this->get_custom_data();
-        error_log('Frappe Integration Task: execute() iniciado. Payload: ' . json_encode($payload));
 
-        // Si no hay datos, abortamos
+        // Si no hay datos, abortamos sin log adicional.
         if (empty($payload)) {
-            error_log('Frappe Integration Task: payload vacío, abortando.');
             return;
         }
+
         try {
-            // Llamamos al notify real
             $response = observer::notify_frappe($payload);
             if ($response === false) {
-                error_log('Frappe Integration Task: notify_frappe devolvió false (error en el post).');
-            } else {
-                error_log('Frappe Integration Task: notify_frappe OK. Respuesta: ' . $response);
+                // Si notify_frappe devolvió false, lanzamos un evento de error
+                frappe_error::create([
+                    'context' => context_system::instance(),
+                    'other'   => ['message' => 'notify_frappe returned false for payload: '. json_encode($payload)]
+                ])->trigger();
             }
         } catch (\Exception $e) {
-            error_log('Frappe Integration Task: excepción capturada en execute(): ' . $e->getMessage());
+            // Único punto donde hacemos log de la excepción
+            frappe_error::create([
+                'context' => context_system::instance(),
+                'other'   => ['message' => 'Exception in send_frappe_event: '. $e->getMessage()]
+            ])->trigger();
         }
     }
 }
