@@ -354,7 +354,7 @@ public static function seguimiento_usuario($username, $courseid) {
     }
     $course = $DB->get_record('course',['id'=>$params['courseid']]);
 
-    // 4) Tiempo dedicado: usamos el manager de dedication_atu
+    // 4) Tiempo dedicado
     require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
     require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
     $mintime = $course->startdate;
@@ -362,28 +362,65 @@ public static function seguimiento_usuario($username, $courseid) {
     $limit   = BLOCK_DEDICATION_DEFAULT_SESSION_LIMIT;
     $dm      = new \block_dedication_atu_manager($course, $mintime, $maxtime, $limit);
 
-    // Recuperamos las sesiones sin resumirlas:
     $sessions = $dm->get_user_dedication_atu($user);
-
     $totalsecs = 0;
     $sessions_data = [];
     foreach ($sessions as $s) {
         $totalsecs += $s->dedicationtime;
         $sessions_data[] = [
-            'start_date' => userdate($s->start_date, '%Y-%m-%d %H:%M:%S'),
+            'start_date'       => userdate($s->start_date, '%Y-%m-%d %H:%M:%S'),
             'duration_seconds' => $s->dedicationtime,
-            'ips' => $s->ips,
+            'ips'              => $s->ips,
         ];
     }
     $sessioncount = count($sessions_data);
     $meansecs     = $sessioncount ? round($totalsecs / $sessioncount, 2) : 0;
 
     // 5) Avance de contenidos
-    require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
     $compinfo = \courseModel::getCompletions($params['courseid'], $user->id);
     $percent  = $compinfo['no_of_completions']
                 ? round($compinfo['no_of_completed'] / $compinfo['no_of_completions'] * 100, 2)
                 : 0;
+
+    // 6) Ítems de calificación y notas del usuario
+    // a) Todos los ítems del gradebook del curso
+    $gradeitems = \grade_item::fetch_all(['courseid' => $params['courseid']]);
+    $items_list = [];
+    foreach ($gradeitems as $gi) {
+        if ($gi->itemtype === 'course') {
+            continue; // omitimos el total del curso
+        }
+        $items_list[] = [
+            'id'          => $gi->id,
+            'name'        => $gi->get_name(false),
+            'grademin'    => $gi->grademin,
+            'grademax'    => $gi->grademax,
+            'sortorder'   => $gi->sortorder,
+        ];
+    }
+
+    // b) Notas del usuario en esos ítems
+    $user_grades = [];
+    foreach ($gradeitems as $gi) {
+        if ($gi->itemtype === 'course') {
+            continue;
+        }
+        $gg = \grade_grade::fetch(['itemid'=>$gi->id,'userid'=>$user->id], IGNORE_MISSING);
+        if ($gg) {
+            $raw       = $gg->rawgrade;
+            $final     = $gg->finalgrade;
+            $percentage = ($raw !== null && $gi->grademax > $gi->grademin)
+                          ? round((($raw - $gi->grademin)/($gi->grademax-$gi->grademin))*100, 2)
+                          : null;
+            $user_grades[] = [
+                'itemid'        => $gi->id,
+                'raw_grade'     => $raw,
+                'final_grade'   => $final,
+                'percentage'    => $percentage,
+                'feedback'      => $gg->feedback,
+            ];
+        }
+    }
 
     // Armamos la respuesta.
     $data = [
@@ -395,6 +432,8 @@ public static function seguimiento_usuario($username, $courseid) {
         'completed_activities' => $compinfo['no_of_completed'],
         'total_activities'     => $compinfo['no_of_completions'],
         'progress_percent'     => $percent,
+        'grade_items'          => $items_list,
+        'user_grades'          => $user_grades,
     ];
 
     return ['status'=>'success','data'=>$data,'message'=>''];
