@@ -510,38 +510,78 @@ public static function generar_excel_seguimiento($courseid) {
     );
 
     // 2) Recuperar curso
-    $course = $DB->get_record('course', ['id' => $params['courseid']], '*', MUST_EXIST);
+    $course = $DB->get_record('course',
+        ['id' => $params['courseid']], '*', MUST_EXIST);
 
-    // 3) Cargar lógica del bloque
+    // 3) Cargar la lógica del bloque
     require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
     require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
 
-    // 4) Instanciar el manager con valores por defecto
+    // 4) Instanciar el manager
     $mintime = $course->startdate;
     $maxtime = time();
     $limit   = BLOCK_DEDICATION_DEFAULT_SESSION_LIMIT;
-    $dm = new \block_dedication_atu_manager($course, $mintime, $maxtime, $limit);
+    $dm      = new \block_dedication_atu_manager($course, $mintime, $maxtime, $limit);
 
-    // 5) Recuperar todos los estudiantes matriculados
+    // 5) Recuperar todos los estudiantes
     $context  = \context_course::instance($course->id);
     $students = get_enrolled_users($context);
 
-    // 6) Generar los datos de fila exactamente como lo hace el bloque
+    // 6) Obtener las filas de datos (cada fila es un array)
     $rows = $dm->get_students_dedication_atu($students);
 
-    // 7) Capturar en buffer la salida de download_students_pruebas()
-    ob_start();
-    $dm->download_students_pruebas(array_merge(
-        [ $dm->get_export_headers() ], // primera fila de cabeceras (nombre, apellido, DNI, etc)
+    // 7) Reconstruir las cabeceras (igual que en el bloque)
+    //    - Recupero las pruebas mediante consulta SQL
+    $clave = 'prueba';
+    $sql_items = "
+        SELECT
+            gi.id           AS id_examen,
+            gi.itemtype     AS tipo_prueba,
+            gi.itemname     AS nombre_prueba
+        FROM {grade_items} gi
+        WHERE gi.courseid = :courseid
+          AND gi.itemname LIKE :like
+        ORDER BY gi.sortorder
+    ";
+    $params_items = [
+        'courseid' => $course->id,
+        'like'     => "%{$clave}%",
+    ];
+    $pruebas = $DB->get_records_sql($sql_items, $params_items);
+
+    // Cabeceras base
+    $cabeceras = [
+        get_string('firstname'),
+        get_string('lastname'),
+        'DNI',
+        get_string('tiempototal', 'block_dedication_atu'),
+        get_string('avancecontenidos', 'block_dedication_atu'),
+    ];
+    // Añadimos nombre de cada prueba
+    foreach ($pruebas as $p) {
+        $cabeceras[] = $p->nombre_prueba;
+    }
+    $cabeceras[] = 'MEDIA';
+    $cabeceras[] = 'CONJUNTO';
+
+    // 8) Preparar el array completo de exportación
+    $exportrows = array_merge(
+        [ $cabeceras ],
         $rows
-    ));
+    );
+
+    // 9) Generar el Excel y capturarlo en un buffer
+    ob_start();
+    $dm->download_students_pruebas($exportrows);
     $excel = ob_get_clean();
 
-    // 8) Devolver el binario crudo
+    // 10) Devolver el binario crudo
     return [
         'status'  => 'success',
         'data'    => $excel,
         'message' => ''
     ];
 }
+
+
 }
