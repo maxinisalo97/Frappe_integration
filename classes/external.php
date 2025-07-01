@@ -387,21 +387,9 @@ public static function seguimiento_usuario($username, $courseid) {
     $total      = isset($compinfo['activities']) ? count($compinfo['activities']) : 0;
     $percent    = $total ? round($completed / $total * 100, 2) : 0;
 
-    // Guardamos el valor actual (posiblemente nulo).
-    $oldCOURSE = isset($COURSE) ? $COURSE : null;
-    // Inyectamos nuestro curso
-    $COURSE = $course;
-
-    // Llamadas que dependen de global $COURSE:
-    $pruebas = \courseModel::obtener_pruebas('prueba');
-    $_notas  = \courseModel::obtener_notas_alumno($user->id, 'prueba');
-
-    // Restauramos
-    if ($oldCOURSE !== null) {
-        $COURSE = $oldCOURSE;
-    } else {
-        unset($COURSE);
-    }
+    // 6) Ítems de prueba y notas con courseModel
+    $pruebas    = \courseModel::obtener_pruebas();
+    $_notas     = \courseModel::obtener_notas_alumno($user->id,'');
     $items_list = [];
     $user_grades= [];
 
