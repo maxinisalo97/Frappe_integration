@@ -595,7 +595,7 @@ public static function generar_excel_seguimiento($courseid) {
     // 10) Devolver el binario crudo
     return [
         'status'  => 'success',
-        'data'    => $excel,
+        'data'    => base64_encode($excel),
         'message' => ''
     ];
 }
