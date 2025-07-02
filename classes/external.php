@@ -347,7 +347,10 @@ public static function seguimiento_usuario($username, $courseid) {
 
     // 2) Usuario
     $user = $DB->get_record('user',
-        ['username' => $params['username']], 'id', IGNORE_MISSING);
+        ['username' => $params['username']],
+        'id, username, firstname, lastname',
+        IGNORE_MISSING
+    );
     if (!$user) {
         return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
     }
@@ -357,6 +360,7 @@ public static function seguimiento_usuario($username, $courseid) {
         return ['status'=>'error','data'=>null,'message'=>'Curso no existe'];
     }
     $course = $DB->get_record('course',['id'=>$params['courseid']]);
+
     // 4) Tiempo dedicado
     require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
     require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
@@ -368,7 +372,6 @@ public static function seguimiento_usuario($username, $courseid) {
     $sessions = $dm->get_user_dedication_atu($user);
     $totalsecs     = 0;
     $sessions_data = [];
-
     foreach ($sessions as $s) {
         $totalsecs += $s->dedicationtime;
         $sessions_data[] = [
@@ -377,68 +380,61 @@ public static function seguimiento_usuario($username, $courseid) {
             'ips'              => $s->ips,
         ];
     }
-
     $sessioncount = count($sessions_data);
     $meansecs     = $sessioncount ? round($totalsecs / $sessioncount, 2) : 0;
 
     // 5) Avance de contenidos
     $compinfo   = \courseModel::getCompletions($params['courseid'], $user->id);
     $completed  = $compinfo['no_of_completed'];
-    // aquí corregimos el total de actividades:
     $total      = isset($compinfo['activities']) ? count($compinfo['activities']) : 0;
     $percent    = $total ? round($completed / $total * 100, 2) : 0;
 
-// 6) Ítems de prueba y notas con filtro 
-$clave = 'prueba';  // la palabra que buscas en el nombre
-
-$sql = "
-    SELECT
-      gi.id                    AS id_examen,
-      gi.itemtype              AS tipo_prueba,
-      gi.itemname              AS nombre_prueba,
-      ROUND(
-        COALESCE(
-          gg.finalgrade,   /* Moodle 4+ */
-          gg.rawgrade      /* Moodle <4 */
-        ),
-        2
-      )                        AS nota
-    FROM {grade_items} gi
-    LEFT JOIN {grade_grades} gg
-      ON gg.itemid = gi.id
-     AND gg.userid = :userid
-    WHERE gi.courseid = :courseid
-      AND gi.itemname LIKE :like
-    ORDER BY gi.sortorder
-";
-
-$params = [
-    'courseid' => $course->id,
-    'userid'   => $user->id,
-    'like'     => "%{$clave}%",
-];
-
-$records = $DB->get_records_sql($sql, $params);
-
-// Montamos los arrays de salida
-$items_list  = [];
-$user_grades = [];
-
-foreach ($records as $r) {
-    $items_list[] = [
-        'id'   => $r->id_examen,
-        'name' => $r->nombre_prueba,
-        'type' => $r->tipo_prueba,
+    // 6) Ítems de prueba y notas con filtro 
+    $clave = 'prueba';
+    $sql = "
+        SELECT
+          gi.id               AS id_examen,
+          gi.itemtype         AS tipo_prueba,
+          gi.itemname         AS nombre_prueba,
+          COALESCE(
+            ROUND(gg.finalgrade,2),
+            ROUND(gg.rawgrade,2)
+          )                   AS nota
+        FROM {grade_items} gi
+        LEFT JOIN {grade_grades} gg
+          ON gg.itemid = gi.id
+         AND gg.userid = :userid
+        WHERE gi.courseid = :courseid
+          AND gi.itemname LIKE :like
+        ORDER BY gi.sortorder
+    ";
+    $params_sql = [
+        'courseid' => $course->id,
+        'userid'   => $user->id,
+        'like'     => "%{$clave}%",
     ];
-    $user_grades[] = [
-        'itemid'      => $r->id_examen,
-        'final_grade' => $r->nota,  // null si no tiene nota
-    ];
-}
+    $records = $DB->get_records_sql($sql, $params_sql);
+
+    $items_list  = [];
+    $user_grades = [];
+    foreach ($records as $r) {
+        $items_list[] = [
+            'id'   => $r->id_examen,
+            'name' => $r->nombre_prueba,
+            'type' => $r->tipo_prueba,
+        ];
+        $user_grades[] = [
+            'itemid'      => $r->id_examen,
+            'final_grade' => $r->nota,  // null si no tiene nota
+        ];
+    }
 
     // 7) Montaje de la respuesta
     $data = [
         'userid'               => $user->id,
+        'username'             => $user->username,
+        'firstname'            => $user->firstname,
+        'lastname'             => $user->lastname,
         'time_spent_seconds'   => $totalsecs,
         'session_count'        => $sessioncount,
         'mean_session_seconds' => $meansecs,

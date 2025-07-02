@@ -3,6 +3,7 @@ namespace local_frappe_integration;
 defined('MOODLE_INTERNAL') || die();
 use local_frappe_integration\task\send_frappe_event;
 use core\task\manager;
+use \local_frappe_integration\external;
 require_once($CFG->libdir . '/filelib.php');
 require_once(__DIR__ . '/../locallib.php');
 global $CFG;
@@ -174,40 +175,68 @@ public static function notify_frappe(array $payload_data) {
      * Evento: el usuario ve (entra) a un curso.
      */
     public static function course_viewed(\core\event\course_viewed $event) {
-        global $DB; // $USER no es necesario aquí si usamos $d['userid']
+        global $DB;
+
+        // 1) Datos básicos del evento
         $d = $event->get_data();
+        $userid_viewing  = $d['userid'];
+        $courseid_viewed = $d['contextinstanceid'];
 
-        $userid_viewing = $d['userid'];
-        $courseid_viewed = $d['contextinstanceid']; // Este es el ID del curso
-
-        $user_record = $DB->get_record('user', ['id' => $userid_viewing], 'id, username', IGNORE_MISSING);
-
-        // Excluimos usuarios no encontrados, sin username, o el usuario invitado
-        if (!$user_record || empty($user_record->username) || $user_record->username === 'guest') {
+        // 2) Obtenemos el username
+        $user_record = $DB->get_record('user',
+            ['id' => $userid_viewing],
+            'id, username, firstname, lastname',
+            IGNORE_MISSING
+        );
+        if (!$user_record
+            || empty($user_record->username)
+            || $user_record->username === 'guest'
+        ) {
             return;
         }
         $username_viewing = $user_record->username;
 
-        // Obtenemos información adicional del curso para este usuario
-        // (Asumiendo que external.php y su función course_user_info ya están correctos)
-        $course_specific_info = external::course_user_info($username_viewing, $courseid_viewed);
-
-        // Verificar que obtuvimos información válida antes de fusionar
-        if ($course_specific_info === false || !is_array($course_specific_info)) {
-            
+        // 3) Información genérica de curso-usuario
+        //    (tu función ya existente)
+        $course_specific_info = external::course_user_info(
+            $username_viewing,
+            $courseid_viewed
+        );
+        if ($course_specific_info === false
+            || !is_array($course_specific_info)
+        ) {
             return;
         }
 
-        // Fusionamos la información específica del curso con los datos del evento
-        $payload = array_merge($course_specific_info, [
-            'action'    => 'course_viewed',
-            'moodle_domain' => self::get_moodle_domain(), // Dominio de Moodle sin protocolo
-            'userid'    => $userid_viewing,
-            'username'  => $username_viewing,
-            'courseid'  => $courseid_viewed,
-            'timestamp' => $d['timecreated'], // Momento en que se vio el curso
-        ]);
+        // 4) Nueva llamada: seguimiento completo del usuario en este curso
+        $trackresp = external::seguimiento_usuario(
+            $username_viewing,
+            $courseid_viewed
+        );
+        // Nos quedamos solo con el array de datos si todo OK
+        $tracking = [];
+        if (isset($trackresp['status']) && $trackresp['status'] === 'success') {
+            $tracking = $trackresp['data'];
+        }
 
+        // 5) Construcción del payload final
+        $payload = array_merge(
+            $course_specific_info,
+            [
+                'action'        => 'course_viewed',
+                'moodle_domain' => self::get_moodle_domain(),
+                'userid'        => $userid_viewing,
+                'username'      => $username_viewing,
+                'firstname'     => $user_record->firstname,
+                'lastname'      => $user_record->lastname,
+                'courseid'      => $courseid_viewed,
+                'timestamp'     => $d['timecreated'],
+                // Añado aquí el seguimiento completo
+                'seguimiento'   => $tracking,
+            ]
+        );
+
+        // 6) Encolamos el evento
         self::enqueue_frappe_event($payload);
     }
     public static function user_graded(\core\event\user_graded $event) {
