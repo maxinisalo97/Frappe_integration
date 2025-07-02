@@ -478,34 +478,48 @@ public static function seguimiento_curso($courseid, $groupname = '') {
     }
     $course = $DB->get_record('course', ['id' => $params['courseid']], '*', MUST_EXIST);
 
-    // 3) Contexto del curso
-    $context = \context_course::instance($course->id);
+    // 3) Recuperar todos los grupos del curso
+    $allgroups = $DB->get_records('groups', ['courseid' => $course->id]);
 
-    // 4) Si nos dan un nombre de grupo, buscamos su ID
+    // 4) Identificar groupid a partir de groupname (número, name exacto, normalizado, idnumber)
     $groupid = 0;
-    if (trim($params['groupname']) !== '') {
-        $group = $DB->get_record(
-            'groups',
-            ['courseid' => $course->id, 'name' => $params['groupname']],
-            'id',
-            IGNORE_MISSING
-        );
-        if (!$group) {
-            return ['status'=>'error','data'=>null,'message'=>'Grupo “'.s($params['groupname']).'” no existe en este curso'];
+    $gname   = trim($params['groupname']);
+    if ($gname !== '') {
+        if (ctype_digit($gname)) {
+            $groupid = (int)$gname;
+        } else {
+            // exacto
+            $group = $DB->get_record('groups', ['courseid'=>$course->id,'name'=>$gname], 'id', IGNORE_MISSING);
+            // guiones bajos ↔ espacios (case-insensitive)
+            if (!$group) {
+                $normalized = str_ireplace('_', ' ', $gname);
+                $group = $DB->get_record_sql(
+                    "SELECT id FROM {groups} WHERE courseid = :cid AND LOWER(name) = LOWER(:n)",
+                    ['cid'=>$course->id, 'n'=>$normalized], IGNORE_MISSING
+                );
+            }
+            // idnumber
+            if (!$group) {
+                $group = $DB->get_record('groups', ['courseid'=>$course->id,'idnumber'=>$gname], 'id', IGNORE_MISSING);
+            }
+            if ($group) {
+                $groupid = $group->id;
+            }
         }
-        $groupid = $group->id;
+        if ($groupid === 0) {
+            return ['status'=>'error','data'=>null,'message'=>'Grupo "'.s($params['groupname']).'" no existe en este curso'];
+        }
     }
 
-    // 5) Recuperar usuarios: si groupid>0 filtramos por grupo
+    // 5) Recuperar usuarios: filtrado por grupo si aplica
+    $context = \context_course::instance($course->id);
     if ($groupid > 0) {
-        // devuelve solo los matriculados en ese grupo
         $students = get_enrolled_users($context, '', $groupid);
     } else {
-        // todos los matriculados en el curso
         $students = get_enrolled_users($context);
     }
 
-    // 6) Para cada usuario reutilizamos seguimiento_usuario()
+    // 6) Reutilizar seguimiento_usuario()
     $result = [];
     foreach ($students as $stu) {
         $resp = self::seguimiento_usuario($stu->username, $course->id);
@@ -514,8 +528,15 @@ public static function seguimiento_curso($courseid, $groupname = '') {
         }
     }
 
-    return ['status'=>'success','data'=>$result,'message'=>''];
+    // 7) Devolver datos y lista de grupos
+    return [
+        'status' => 'success',
+        'groups' => array_values($allgroups),  // array indexado con objetos: id, courseid, name, idnumber, etc.
+        'data'   => $result,
+        'message'=> ''
+    ];
 }
+
 
     /**
  * Método interno: generar_excel_seguimiento
