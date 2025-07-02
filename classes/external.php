@@ -460,49 +460,56 @@ foreach ($records as $r) {
  * @param int $courseid
  * @return array status,data,message
  */
-public static function seguimiento_curso($courseid, $groupid = 0) {
-    global $DB, $CFG;
+public static function seguimiento_curso($courseid, $groupname = '') {
+    global $DB;
 
-    // 1) Validación
+    // 1) Validación de parámetros
     $params = self::validate_parameters(
         new external_function_parameters([
-            'courseid' => new external_value(PARAM_INT, 'ID de curso'),
-            'groupid'  => new external_value(PARAM_INT, 'ID de grupo (0 = todos)', VALUE_DEFAULT, 0),
+            'courseid'  => new external_value(PARAM_INT,  'ID de curso'),
+            'groupname' => new external_value(PARAM_TEXT, 'Nombre de grupo (vacío = todos)', VALUE_DEFAULT, ''),
         ]),
-        compact('courseid','groupid')
+        compact('courseid','groupname')
     );
 
-    // 2) Curso
+    // 2) Comprobar curso
     if (!$DB->record_exists('course', ['id' => $params['courseid']])) {
         return ['status'=>'error','data'=>null,'message'=>'Curso no existe'];
     }
     $course = $DB->get_record('course', ['id' => $params['courseid']], '*', MUST_EXIST);
 
-    // 3) Contexto
+    // 3) Contexto del curso
     $context = \context_course::instance($course->id);
 
-    // 4) Si nos piden un grupo concreto, comprobamos que exista y pertenece al curso
-    if ($params['groupid'] > 0) {
-        if (!$DB->record_exists('groups', ['id' => $params['groupid'], 'courseid' => $course->id])) {
-            return ['status'=>'error','data'=>null,'message'=>'Grupo no existe en este curso'];
+    // 4) Si nos dan un nombre de grupo, buscamos su ID
+    $groupid = 0;
+    if (trim($params['groupname']) !== '') {
+        $group = $DB->get_record(
+            'groups',
+            ['courseid' => $course->id, 'name' => $params['groupname']],
+            'id',
+            IGNORE_MISSING
+        );
+        if (!$group) {
+            return ['status'=>'error','data'=>null,'message'=>'Grupo “'.s($params['groupname']).'” no existe en este curso'];
         }
+        $groupid = $group->id;
     }
 
-    // 5) Recuperar usuarios: si groupid>0 pasamos ese parm a get_enrolled_users()
-    if ($params['groupid'] > 0) {
-        // Esta función obtiene usuarios matriculados en el curso y en el grupo
-        $students = get_enrolled_users($context, '', $params['groupid']);
+    // 5) Recuperar usuarios: si groupid>0 filtramos por grupo
+    if ($groupid > 0) {
+        // devuelve solo los matriculados en ese grupo
+        $students = get_enrolled_users($context, '', $groupid);
     } else {
-        // Todos los usuarios matriculados en el curso
+        // todos los matriculados en el curso
         $students = get_enrolled_users($context);
     }
 
-    // 6) Reutilizamos el método por usuario
+    // 6) Para cada usuario reutilizamos seguimiento_usuario()
     $result = [];
     foreach ($students as $stu) {
         $resp = self::seguimiento_usuario($stu->username, $course->id);
         if ($resp['status'] === 'success') {
-            // ya viene en array, no hace falta json_encode aquí
             $result[] = $resp['data'];
         }
     }
@@ -515,15 +522,16 @@ public static function seguimiento_curso($courseid, $groupid = 0) {
  *   Parámetros: ['courseid' => int]
  * Devuelve el fichero Excel binario del Resumen de Evaluación ATU.
  */
-public static function generar_excel_seguimiento($courseid) {
+public static function generar_excel_seguimiento($courseid, $groupname = '') {
     global $DB, $CFG;
 
-    // 1) Validación
+    // 1) Validación de parámetros
     $params = self::validate_parameters(
         new external_function_parameters([
-            'courseid' => new external_value(PARAM_INT, 'ID de curso'),
+            'courseid'  => new external_value(PARAM_INT,  'ID de curso'),
+            'groupname' => new external_value(PARAM_TEXT, 'Nombre de grupo (vacío = todos)', VALUE_DEFAULT, ''),
         ]),
-        compact('courseid')
+        compact('courseid','groupname')
     );
 
     // 2) Recuperar curso
@@ -540,14 +548,33 @@ public static function generar_excel_seguimiento($courseid) {
     $limit   = BLOCK_DEDICATION_DEFAULT_SESSION_LIMIT;
     $dm      = new \block_dedication_atu_manager($course, $mintime, $maxtime, $limit);
 
-    // 5) Recuperar todos los estudiantes
-    $context  = \context_course::instance($course->id);
-    $students = get_enrolled_users($context);
+    // 5) Determinar grupo (si se pasó nombre)
+    $context = \context_course::instance($course->id);
+    $groupid = 0;
+    if (trim($params['groupname']) !== '') {
+        $group = $DB->get_record(
+            'groups',
+            ['courseid' => $course->id, 'name' => $params['groupname']],
+            'id',
+            IGNORE_MISSING
+        );
+        if (!$group) {
+            return ['status'=>'error','data'=>null,'message'=>'Grupo “'.s($params['groupname']).'” no existe en este curso'];
+        }
+        $groupid = $group->id;
+    }
 
-    // 6) Obtener las filas de datos (cada fila puede venir como stdClass o array)
+    // 6) Recuperar los estudiantes (filtrado por grupo si aplica)
+    if ($groupid > 0) {
+        $students = get_enrolled_users($context, '', $groupid);
+    } else {
+        $students = get_enrolled_users($context);
+    }
+
+    // 7) Obtener las filas de datos
     $rows = $dm->get_students_dedication_atu($students);
 
-    // 7) Reconstruir las cabeceras (igual que en el bloque)
+    // 8) Reconstruir las cabeceras
     $clave = 'prueba';
     $sql_items = "
         SELECT
@@ -559,13 +586,11 @@ public static function generar_excel_seguimiento($courseid) {
           AND gi.itemname LIKE :like
         ORDER BY gi.sortorder
     ";
-    $params_items = [
+    $pruebas = $DB->get_records_sql($sql_items, [
         'courseid' => $course->id,
         'like'     => "%{$clave}%",
-    ];
-    $pruebas = $DB->get_records_sql($sql_items, $params_items);
+    ]);
 
-    // Cabeceras base
     $cabeceras = [
         get_string('firstname'),
         get_string('lastname'),
@@ -573,43 +598,37 @@ public static function generar_excel_seguimiento($courseid) {
         get_string('tiempototal', 'block_dedication_atu'),
         get_string('avancecontenidos', 'block_dedication_atu'),
     ];
-    // Añadimos nombre de cada prueba
     foreach ($pruebas as $p) {
         $cabeceras[] = $p->nombre_prueba;
     }
     $cabeceras[] = 'MEDIA';
     $cabeceras[] = 'CONJUNTO';
 
-    // 8) Preparar el array completo de exportación
+    // 9) Preparar el array completo de exportación
     $exportrows = [];
-    // Primero las cabeceras
     $exportrows[] = $cabeceras;
 
-    // Luego cada fila de datos, garantizando que todas las celdas sean cadenas
     foreach ($rows as $row) {
-        // 1) Si viene como objeto, lo convertimos a array
         if (is_object($row)) {
             $row = (array)$row;
         }
         $flat = [];
         foreach ($row as $cell) {
             if (is_object($cell) || is_array($cell)) {
-                // Serializamos objetos o arrays a JSON
                 $flat[] = json_encode($cell);
             } else {
-                // Forzamos todo a string (NULL → "")
                 $flat[] = (string)$cell;
             }
         }
         $exportrows[] = $flat;
     }
 
-    // 9) Generar el Excel y capturarlo en un buffer
+    // 10) Generar el Excel y capturarlo en un buffer
     ob_start();
     $dm->download_students_pruebas($exportrows);
     $excel = ob_get_clean();
 
-    // 10) Devolver el binario crudo
+    // 11) Devolver el binario en Base64
     return [
         'status'  => 'success',
         'data'    => base64_encode($excel),
