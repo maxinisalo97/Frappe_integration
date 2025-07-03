@@ -31,4 +31,8 @@ $observers = [
             'eventname' => '\core\event\grade_item_deleted',
             'callback'  => 'local_frappe_integration\observer::grade_item_deleted',
           ],
+          [
+            'eventname' => '\core\event\course_module_viewed',
+            'callback'  => 'local_frappe_integration\observer::course_viewed',
+        ],
 ];
