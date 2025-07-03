@@ -33,6 +33,6 @@ $observers = [
           ],
           [
             'eventname' => '\core\event\course_module_viewed',
-            'callback'  => 'local_frappe_integration\observer::course_viewed',
+            'callback'  => 'local_frappe_integration\observer::course_module_viewed',
         ],
 ];

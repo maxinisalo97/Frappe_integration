@@ -171,73 +171,72 @@ public static function notify_frappe(array $payload_data) {
         
         self::enqueue_frappe_event($payload);
     }
-    /**
-     * Evento: el usuario ve (entra) a un curso.
+      /**
+     * Método interno que construye y encola el payload para un "acceso" a curso.
+     *
+     * @param int $userid   ID de usuario
+     * @param int $courseid ID de curso
+     * @param int $time     Timestamp del evento
      */
-    public static function course_viewed(\core\event\course_viewed $event) {
+    protected static function handle_course_access(int $userid, int $courseid, int $time) {
         global $DB;
 
-        // 1) Datos básicos del evento
-        $d = $event->get_data();
-        $userid_viewing  = $d['userid'];
-        $courseid_viewed = $d['contextinstanceid'];
-
-        // 2) Obtenemos el username
-        $user_record = $DB->get_record('user',
-            ['id' => $userid_viewing],
-            'id, username, firstname, lastname',
-            IGNORE_MISSING
-        );
-        if (!$user_record
-            || empty($user_record->username)
-            || $user_record->username === 'guest'
-        ) {
-            return;
-        }
-        $username_viewing = $user_record->username;
-
-        // 3) Información genérica de curso-usuario
-        //    (tu función ya existente)
-        $course_specific_info = external::course_user_info(
-            $username_viewing,
-            $courseid_viewed
-        );
-        if ($course_specific_info === false
-            || !is_array($course_specific_info)
-        ) {
+        // 1) Ignorar guest u otros filtrados
+        $user = $DB->get_record('user', ['id'=>$userid], 'username,firstname,lastname', IGNORE_MISSING);
+        if (!$user || $user->username === 'guest') {
             return;
         }
 
-        // 4) Nueva llamada: seguimiento completo del usuario en este curso
-        $trackresp = external::seguimiento_usuario(
-            $username_viewing,
-            $courseid_viewed
-        );
-        // Nos quedamos solo con el array de datos si todo OK
-        $tracking = [];
-        if (isset($trackresp['status']) && $trackresp['status'] === 'success') {
-            $tracking = $trackresp['data'];
+        // 2) Invocar tu API para datos genéricos y seguimiento
+        $info = external::course_user_info($user->username, $courseid);
+        $track = [];
+        if (!empty($info['status']) && $info['status']==='success') {
+            $trackresp = external::seguimiento_usuario($user->username, $courseid);
+            if (!empty($trackresp['status']) && $trackresp['status']==='success') {
+                $track = $trackresp['data'];
+            }
         }
 
-        // 5) Construcción del payload final
+        // 3) Construir payload
         $payload = array_merge(
-            $course_specific_info,
+            $info['data'] ?? [],
             [
-                'action'        => 'course_viewed',
-                'moodle_domain' => self::get_moodle_domain(),
-                'userid'        => $userid_viewing,
-                'username'      => $username_viewing,
-                'firstname'     => $user_record->firstname,
-                'lastname'      => $user_record->lastname,
-                'courseid'      => $courseid_viewed,
-                'timestamp'     => $d['timecreated'],
-                // Añado aquí el seguimiento completo
-                'seguimiento'   => $tracking,
+                'action'      => 'course_viewed',
+                'moodle_domain'=> self::get_moodle_domain(),
+                'userid'      => $userid,
+                'username'    => $user->username,
+                'firstname'   => $user->firstname,
+                'lastname'    => $user->lastname,
+                'courseid'    => $courseid,
+                'timestamp'   => $time,
+                'seguimiento' => $track,
             ]
         );
 
-        // 6) Encolamos el evento
+        // 4) Encolar
         self::enqueue_frappe_event($payload);
+    }
+
+    /**
+     * Evento: el usuario ve el curso completo.
+     */
+    public static function course_viewed(\core\event\course_viewed $event) {
+        $d = $event->get_data();
+        $userid   = $d['userid'];
+        $courseid = $d['contextinstanceid'];
+        $time     = $d['timecreated'];
+        self::handle_course_access($userid, $courseid, $time);
+    }
+
+    /**
+     * Evento: el usuario ve cualquier módulo dentro del curso.
+     */
+    public static function course_module_viewed(\core\event\course_module_viewed $event) {
+        $d = $event->get_data();
+        $userid   = $d['userid'];
+        $courseid = $d['courseid'];            // ojo, aquí el campo es courseid
+        $time     = $d['timecreated'];
+        self::handle_course_access($userid, $courseid, $time);
     }
     public static function user_graded(\core\event\user_graded $event) {
         global $DB;
