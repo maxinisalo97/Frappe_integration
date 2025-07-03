@@ -55,6 +55,7 @@ class external extends external_api {
             'seguimiento_usuario'            => 'seguimiento_usuario',
             'seguimiento_curso'              => 'seguimiento_curso',
             'generar_excel_seguimiento'      => 'generar_excel_seguimiento',
+            'obtener_notas_curso'            => 'obtener_notas_curso',
         ];
 
         if (!isset($allowed[$params['method']])) {
@@ -661,6 +662,93 @@ public static function generar_excel_seguimiento($courseid, $groupname = '') {
     return [
         'status'  => 'success',
         'data'    => base64_encode($excel),
+        'message' => ''
+    ];
+}
+/**
+ * Método interno: obtener_notas_items_usuarios
+ *   Parámetros: ['courseid' => int]
+ * Devuelve: lista de usuarios con sus calificaciones en cada ítem del curso.
+ */
+public static function obtener_notas_curso($courseid) {
+    global $DB, $CFG;
+
+    // 1) Validación de parámetros
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'courseid' => new external_value(PARAM_INT, 'ID de curso'),
+        ]),
+        compact('courseid')
+    );
+
+    // 2) Comprobar que el curso existe
+    if (!$DB->record_exists('course', ['id' => $params['courseid']])) {
+        return ['status'=>'error','data'=>null,'message'=>'Curso no existe'];
+    }
+
+    // 3) Cargar librerías de Gradebook
+    require_once($CFG->libdir . '/grade/grade_item.php');
+    require_once($CFG->libdir . '/grade/grade_grade.php');
+
+    // 4) Recuperar todos los ítems de calificación (sin el total del curso)
+    $allitems = \grade_item::fetch_all(['courseid' => $params['courseid']]) ?: [];
+    $items = [];
+    foreach ($allitems as $gi) {
+        if ($gi->itemtype === 'course') {
+            continue;
+        }
+        $items[] = [
+            'id'       => $gi->id,
+            'name'     => $gi->get_name(false),
+            'min'      => $gi->grademin,
+            'max'      => $gi->grademax,
+        ];
+    }
+
+    // 5) Ordenar ítems por sortorder
+    usort($items, function($a, $b){
+        return $allitems[$a['id']]->sortorder <=> $allitems[$b['id']]->sortorder;
+    });
+
+    // 6) Obtener los usuarios matriculados en el curso
+    $context = \context_course::instance($params['courseid']);
+    $users = get_enrolled_users($context);
+
+    // 7) Para cada usuario, obtener la nota de cada ítem
+    $result = [];
+    foreach ($users as $u) {
+        $userRow = [
+            'userid'    => $u->id,
+            'username'  => $u->username,
+            'firstname' => $u->firstname,
+            'lastname'  => $u->lastname,
+            'grades'    => [],
+        ];
+        foreach ($items as $item) {
+            $gg = \grade_grade::fetch([
+                'itemid' => $item['id'],
+                'userid' => $u->id
+            ], IGNORE_MISSING);
+            if ($gg && $gg->finalgrade !== null) {
+                $grade = round($gg->finalgrade, 2);
+            } else {
+                $grade = '-';
+            }
+            $userRow['grades'][] = [
+                'itemid' => $item['id'],
+                'grade'  => $grade,
+            ];
+        }
+        $result[] = $userRow;
+    }
+
+    // 8) Devolver datos
+    return [
+        'status'  => 'success',
+        'data'    => [
+            'items' => $items,
+            'users' => $result,
+        ],
         'message' => ''
     ];
 }
