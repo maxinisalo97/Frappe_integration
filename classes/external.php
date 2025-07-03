@@ -335,6 +335,7 @@ public static function obtener_items_calificador($courseid) {
  */
 public static function seguimiento_usuario($username, $courseid) {
     global $DB, $CFG;
+    
 
     // 1) Validación de parámetros
     $params = self::validate_parameters(
@@ -428,6 +429,16 @@ public static function seguimiento_usuario($username, $courseid) {
             'final_grade' => $r->nota,  // null si no tiene nota
         ];
     }
+    require_once($CFG->dirroot . '/group/lib.php');   // <<< grupos
+    list($usergroupids, $unused) = groups_get_user_groups($courseid, $user->id);
+    $groups = [];
+    if (!empty($usergroupids)) {
+        // traerse id y name de todos, si puede estar en varios
+        $groups = array_values($DB->get_records_list(
+            'groups', 'id', $usergroupids,
+            'name ASC', 'id, name'
+        ));
+    }
 
     // 7) Montaje de la respuesta
     $data = [
@@ -444,6 +455,7 @@ public static function seguimiento_usuario($username, $courseid) {
         'progress_percent'     => $percent,
         'grade_items'          => $items_list,
         'user_grades'          => $user_grades,
+        'groups'               => $groups,  // array de grupos con id y name
     ];
 
     return ['status'=>'success','data'=>$data,'message'=>''];
