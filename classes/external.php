@@ -701,12 +701,13 @@ public static function obtener_notas_curso($courseid) {
             'id'       => $gi->id,
             'name'     => $gi->get_name(false),
             'min'      => $gi->grademin,
-            'max'      => $gi->grademax,
+            'max'      => $gi->grademax,                     // nota máxima
+            'weight'   => (float)$gi->aggregationcoef,       // peso en el curso
         ];
     }
 
     // 5) Ordenar ítems por sortorder
-    usort($items, function($a, $b){
+    usort($items, function($a, $b) use ($allitems) {
         return $allitems[$a['id']]->sortorder <=> $allitems[$b['id']]->sortorder;
     });
 
@@ -714,7 +715,7 @@ public static function obtener_notas_curso($courseid) {
     $context = \context_course::instance($params['courseid']);
     $users = get_enrolled_users($context);
 
-    // 7) Para cada usuario, obtener la nota de cada ítem
+    // 7) Para cada usuario, obtener la nota y el feedback de cada ítem
     $result = [];
     foreach ($users as $u) {
         $userRow = [
@@ -729,14 +730,20 @@ public static function obtener_notas_curso($courseid) {
                 'itemid' => $item['id'],
                 'userid' => $u->id
             ], IGNORE_MISSING);
-            if ($gg && $gg->finalgrade !== null) {
-                $grade = round($gg->finalgrade, 2);
+
+            if ($gg) {
+                $final     = $gg->finalgrade;
+                $grade     = ($final !== null) ? round($final, 2) : '-';
+                $feedback  = $gg->feedback ?? '';
             } else {
-                $grade = '-';
+                $grade     = '-';
+                $feedback  = '';
             }
+
             $userRow['grades'][] = [
-                'itemid' => $item['id'],
-                'grade'  => $grade,
+                'itemid'   => $item['id'],
+                'grade'    => $grade,
+                'feedback' => $feedback,   // retroalimentación del docente
             ];
         }
         $result[] = $userRow;
@@ -752,5 +759,6 @@ public static function obtener_notas_curso($courseid) {
         'message' => ''
     ];
 }
+
 
 }
