@@ -690,32 +690,30 @@ public static function obtener_notas_curso($courseid) {
     require_once($CFG->libdir . '/grade/grade_item.php');
     require_once($CFG->libdir . '/grade/grade_grade.php');
 
-    // 4) Recuperar todos los ítems de calificación (sin el total del curso)
+    // 4) Recuperar TODOS los ítems, en orden de sortorder (incluye categorías)
     $allitems = \grade_item::fetch_all(['courseid' => $params['courseid']]) ?: [];
     $items = [];
     foreach ($allitems as $gi) {
+        // Sólo saltamos el "Total del curso" (itemtype = 'course')
         if ($gi->itemtype === 'course') {
             continue;
         }
         $items[] = [
-            'id'       => $gi->id,
-            'name'     => $gi->get_name(false),
-            'min'      => $gi->grademin,
-            'max'      => $gi->grademax,                     // nota máxima
-            'weight'   => (float)$gi->aggregationcoef,       // peso en el curso
+            'id'      => $gi->id,
+            'name'    => $gi->get_name(true),             // nombre tal cual Moodle
+            'itemtype'=> $gi->itemtype,                   // 'mod', 'manual', 'category', …
+            'min'     => $gi->grademin,
+            'max'     => $gi->grademax,                   // nota máxima
+            'weight'  => (float)$gi->aggregationcoef,     // peso en el curso
+            'sort'    => $gi->sortorder,
         ];
     }
 
-    // 5) Ordenar ítems por sortorder
-    usort($items, function($a, $b) use ($allitems) {
-        return $allitems[$a['id']]->sortorder <=> $allitems[$b['id']]->sortorder;
-    });
-
-    // 6) Obtener los usuarios matriculados en el curso
+    // 5) Obtener los usuarios matriculados en el curso
     $context = \context_course::instance($params['courseid']);
     $users = get_enrolled_users($context);
 
-    // 7) Para cada usuario, obtener la nota y el feedback de cada ítem
+    // 6) Para cada usuario, obtener la nota y el feedback de cada ítem
     $result = [];
     foreach ($users as $u) {
         $userRow = [
@@ -732,31 +730,30 @@ public static function obtener_notas_curso($courseid) {
             ], IGNORE_MISSING);
 
             if ($gg) {
-                $final     = $gg->finalgrade;
-                $grade     = ($final !== null) ? round($final, 2) : '-';
-                $feedback  = $gg->feedback ?? '';
+                $grade    = $gg->finalgrade !== null ? round($gg->finalgrade, 2) : '-';
+                $feedback = $gg->feedback ?? '';
             } else {
-                $grade     = '-';
-                $feedback  = '';
+                $grade    = '-';
+                $feedback = '';
             }
 
             $userRow['grades'][] = [
                 'itemid'   => $item['id'],
                 'grade'    => $grade,
-                'feedback' => $feedback,   // retroalimentación del docente
+                'feedback' => $feedback,
             ];
         }
         $result[] = $userRow;
     }
 
-    // 8) Devolver datos
+    // 7) Devolver datos
     return [
-        'status'  => 'success',
-        'data'    => [
+        'status' => 'success',
+        'data'   => [
             'items' => $items,
             'users' => $result,
         ],
-        'message' => ''
+        'message'=> ''
     ];
 }
 
