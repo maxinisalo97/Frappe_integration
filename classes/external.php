@@ -552,6 +552,11 @@ public static function seguimiento_curso($courseid, $groupname = '') {
  *   Parámetros: ['courseid' => int]
  * Devuelve el fichero Excel binario del Resumen de Evaluación ATU.
  */
+/**
+ * Método interno: generar_excel_seguimiento
+ *   Parámetros: ['courseid' => int]
+ * Devuelve el fichero Excel binario del Resumen de Evaluación ATU.
+ */
 public static function generar_excel_seguimiento($courseid, $groupname = '') {
     global $DB, $CFG;
 
@@ -569,10 +574,9 @@ public static function generar_excel_seguimiento($courseid, $groupname = '') {
     if ($resp['status'] !== 'success') {
         return ['status'=>'error','data'=>null,'message'=>'No se pudo obtener datos de seguimiento'];
     }
-    $rows_data = $resp['data'];  // lista de arrays con todos los campos
+    $rows_data = $resp['data'];
 
     // 3) Reconstruir las cabeceras
-    // 3.1) Cabeceras fijas
     $cabeceras = [
         get_string('firstname'),
         get_string('lastname'),
@@ -582,14 +586,15 @@ public static function generar_excel_seguimiento($courseid, $groupname = '') {
     ];
 
     // 3.2) Dinámicas: mismas pruebas que en seguimiento_usuario
-    //    usamos el mismo SQL para garantizar orden idéntico
     $clave = 'prueba';
     $sql_items = "
-        SELECT gi.id AS id_examen, gi.nombre_prueba
-          FROM {grade_items} gi
-         WHERE gi.courseid = :courseid
-           AND gi.itemname LIKE :like
-         ORDER BY gi.sortorder
+        SELECT
+            gi.id            AS id_examen,
+            gi.itemname      AS nombre_prueba
+        FROM {grade_items} gi
+        WHERE gi.courseid = :courseid
+          AND gi.itemname LIKE :like
+        ORDER BY gi.sortorder
     ";
     $pruebas = $DB->get_records_sql($sql_items, [
         'courseid' => $params['courseid'],
@@ -608,8 +613,6 @@ public static function generar_excel_seguimiento($courseid, $groupname = '') {
     $exportrows[] = $cabeceras;
 
     foreach ($rows_data as $d) {
-        // each $d has keys: firstname, lastname, username, time_spent_seconds,
-        // completed_activities, total_activities, user_grades (array of ['itemid','final_grade']), ...
         $flat = [];
 
         // 4.1) firstname, lastname, DNI
@@ -626,7 +629,7 @@ public static function generar_excel_seguimiento($courseid, $groupname = '') {
             $secs%60
         );
 
-        // 4.3) avance contenidos → "x/y"
+        // 4.3) avance contenidos → "x/y (z%)"
         $flat[] = sprintf(
             "%d/%d (%.2f%%)",
             $d['completed_activities'],
@@ -635,12 +638,11 @@ public static function generar_excel_seguimiento($courseid, $groupname = '') {
         );
 
         // 4.4) cada prueba en el orden de $pruebas
-        //     buscamos en user_grades para ese itemid
         foreach ($pruebas as $p) {
             $nota = '-';
             foreach ($d['user_grades'] as $ug) {
                 if ($ug['itemid'] == $p->id_examen) {
-                    $nota = $ug['final_grade'] !== null
+                    $nota = ($ug['final_grade'] !== null)
                           ? round($ug['final_grade'], 2)
                           : '-';
                     break;
@@ -657,16 +659,15 @@ public static function generar_excel_seguimiento($courseid, $groupname = '') {
                 $count++;
             }
         }
-        $media = $count ? round($sum/$count, 2) : '-';
-        $flat[] = $media;
+        $flat[] = $count ? round($sum/$count, 2) : '-';
 
-        // 4.6) CONJUNTO (si no lo calculas, lo dejamos en blanco)
+        // 4.6) CONJUNTO (dejamos en blanco o calcula aquí si lo necesitas)
         $flat[] = '';
 
         $exportrows[] = $flat;
     }
 
-    // 5) Volcar a Excel con tu helper
+    // 5) Volcar a Excel con tu helper del bloque
     require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
     require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
     $course = $DB->get_record('course', ['id'=>$params['courseid']], '*', MUST_EXIST);
