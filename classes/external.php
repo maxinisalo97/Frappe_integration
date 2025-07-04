@@ -564,63 +564,15 @@ public static function generar_excel_seguimiento($courseid, $groupname = '') {
         compact('courseid','groupname')
     );
 
-    // 2) Recuperar curso
-    $course = $DB->get_record('course',
-        ['id' => $params['courseid']], '*', MUST_EXIST);
-
-    // 3) Cargar la lógica del bloque
-    require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
-    require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
-
-    // 4) Instanciar el manager
-    $mintime = $course->startdate;
-    $maxtime = time();
-    $limit   = BLOCK_DEDICATION_DEFAULT_SESSION_LIMIT;
-    $dm      = new \block_dedication_atu_manager($course, $mintime, $maxtime, $limit);
-
-    // 5) Determinar grupo (si se pasó nombre)
-    $context = \context_course::instance($course->id);
-    $groupid = 0;
-    if (trim($params['groupname']) !== '') {
-        $group = $DB->get_record(
-            'groups',
-            ['courseid' => $course->id, 'name' => $params['groupname']],
-            'id',
-            IGNORE_MISSING
-        );
-        if (!$group) {
-            return ['status'=>'error','data'=>null,'message'=>'Grupo “'.s($params['groupname']).'” no existe en este curso'];
-        }
-        $groupid = $group->id;
+    // 2) Obtener datos puros de seguimiento
+    $resp = self::seguimiento_curso($params['courseid'], $params['groupname']);
+    if ($resp['status'] !== 'success') {
+        return ['status'=>'error','data'=>null,'message'=>'No se pudo obtener datos de seguimiento'];
     }
+    $rows_data = $resp['data'];  // lista de arrays con todos los campos
 
-    // 6) Recuperar los estudiantes (filtrado por grupo si aplica)
-    if ($groupid > 0) {
-        $students = get_enrolled_users($context, '', $groupid);
-    } else {
-        $students = get_enrolled_users($context);
-    }
-
-    // 7) Obtener las filas de datos
-    $rows = $dm->get_students_dedication_atu($students);
-
-    // 8) Reconstruir las cabeceras
-    $clave = 'prueba';
-    $sql_items = "
-        SELECT
-            gi.id           AS id_examen,
-            gi.itemtype     AS tipo_prueba,
-            gi.itemname     AS nombre_prueba
-        FROM {grade_items} gi
-        WHERE gi.courseid = :courseid
-          AND gi.itemname LIKE :like
-        ORDER BY gi.sortorder
-    ";
-    $pruebas = $DB->get_records_sql($sql_items, [
-        'courseid' => $course->id,
-        'like'     => "%{$clave}%",
-    ]);
-
+    // 3) Reconstruir las cabeceras
+    // 3.1) Cabeceras fijas
     $cabeceras = [
         get_string('firstname'),
         get_string('lastname'),
@@ -628,43 +580,110 @@ public static function generar_excel_seguimiento($courseid, $groupname = '') {
         get_string('tiempototal', 'block_dedication_atu'),
         get_string('avancecontenidos', 'block_dedication_atu'),
     ];
+
+    // 3.2) Dinámicas: mismas pruebas que en seguimiento_usuario
+    //    usamos el mismo SQL para garantizar orden idéntico
+    $clave = 'prueba';
+    $sql_items = "
+        SELECT gi.id AS id_examen, gi.nombre_prueba
+          FROM {grade_items} gi
+         WHERE gi.courseid = :courseid
+           AND gi.itemname LIKE :like
+         ORDER BY gi.sortorder
+    ";
+    $pruebas = $DB->get_records_sql($sql_items, [
+        'courseid' => $params['courseid'],
+        'like'     => "%{$clave}%"
+    ]);
     foreach ($pruebas as $p) {
         $cabeceras[] = $p->nombre_prueba;
     }
+
+    // 3.3) Columnas finales
     $cabeceras[] = 'MEDIA';
     $cabeceras[] = 'CONJUNTO';
 
-    // 9) Preparar el array completo de exportación
+    // 4) Montar filas de exportación
     $exportrows = [];
     $exportrows[] = $cabeceras;
 
-    foreach ($rows as $row) {
-        if (is_object($row)) {
-            $row = (array)$row;
-        }
+    foreach ($rows_data as $d) {
+        // each $d has keys: firstname, lastname, username, time_spent_seconds,
+        // completed_activities, total_activities, user_grades (array of ['itemid','final_grade']), ...
         $flat = [];
-        foreach ($row as $cell) {
-            if (is_object($cell) || is_array($cell)) {
-                $flat[] = json_encode($cell);
-            } else {
-                $flat[] = (string)$cell;
+
+        // 4.1) firstname, lastname, DNI
+        $flat[] = $d['firstname'];
+        $flat[] = $d['lastname'];
+        $flat[] = $d['username'];
+
+        // 4.2) tiempo total → HH:MM:SS
+        $secs = (int)$d['time_spent_seconds'];
+        $flat[] = sprintf(
+            '%02d:%02d:%02d',
+            floor($secs/3600),
+            floor(($secs%3600)/60),
+            $secs%60
+        );
+
+        // 4.3) avance contenidos → "x/y"
+        $flat[] = "{$d['completed_activities']}/{$d['total_activities']}";
+
+        // 4.4) cada prueba en el orden de $pruebas
+        //     buscamos en user_grades para ese itemid
+        foreach ($pruebas as $p) {
+            $nota = '-';
+            foreach ($d['user_grades'] as $ug) {
+                if ($ug['itemid'] == $p->id_examen) {
+                    $nota = $ug['final_grade'] !== null
+                          ? round($ug['final_grade'], 2)
+                          : '-';
+                    break;
+                }
+            }
+            $flat[] = $nota;
+        }
+
+        // 4.5) MEDIA (promedio simple de las notas numéricas)
+        $sum = 0; $count = 0;
+        foreach ($d['user_grades'] as $ug) {
+            if ($ug['final_grade'] !== null) {
+                $sum += $ug['final_grade'];
+                $count++;
             }
         }
+        $media = $count ? round($sum/$count, 2) : '-';
+        $flat[] = $media;
+
+        // 4.6) CONJUNTO (si no lo calculas, lo dejamos en blanco)
+        $flat[] = '';
+
         $exportrows[] = $flat;
     }
 
-    // 10) Generar el Excel y capturarlo en un buffer
+    // 5) Volcar a Excel con tu helper
+    require_once($CFG->dirroot . '/blocks/dedication_atu/models/course.php');
+    require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
+    $course = $DB->get_record('course', ['id'=>$params['courseid']], '*', MUST_EXIST);
+    $dm = new \block_dedication_atu_manager(
+        $course,
+        $course->startdate,
+        time(),
+        BLOCK_DEDICATION_DEFAULT_SESSION_LIMIT
+    );
+
     ob_start();
     $dm->download_students_pruebas($exportrows);
     $excel = ob_get_clean();
 
-    // 11) Devolver el binario en Base64
+    // 6) Devolver Base64
     return [
         'status'  => 'success',
         'data'    => base64_encode($excel),
         'message' => ''
     ];
 }
+
 /**
  * Método interno: obtener_notas_items_usuarios
  *   Parámetros: ['courseid' => int]
