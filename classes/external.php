@@ -627,7 +627,12 @@ public static function generar_excel_seguimiento($courseid, $groupname = '') {
         );
 
         // 4.3) avance contenidos → "x/y"
-        $flat[] = "{$d['completed_activities']}/{$d['total_activities']}";
+        $flat[] = sprintf(
+            "%d/%d (%.2f%%)",
+            $d['completed_activities'],
+            $d['total_activities'],
+            $d['progress_percent']
+        );
 
         // 4.4) cada prueba en el orden de $pruebas
         //     buscamos en user_grades para ese itemid
