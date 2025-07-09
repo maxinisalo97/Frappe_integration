@@ -892,7 +892,7 @@ ENDP;
     }
 
     // 7) Instanciamos TCPDF exactamente como el bloque lo hace
-    $pdf = new MYPDF2(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+    $pdf = new \MYPDF2(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
     $pdf->SetTitle('Conjunto de pruebas');
     $pdf->SetProtection(['modify']);
     $pdf->setPrintHeader(true);
