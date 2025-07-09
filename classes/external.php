@@ -833,7 +833,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         $instid = $cm->id;
 
         // reutilizo exactamente tu función que ya limpia y extrae la parte HTML
-        $html_conjunto .= libDedication_atu::devuelve_informe_respuestas_html(
+        $html_conjunto .= \libDedication_atu::devuelve_informe_respuestas_html(
             $r->attemptid, $instid, $params['courseid']
         );
 
@@ -843,7 +843,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
 
     // 5) Generar el PDF usando TCPDF
     ob_start();
-    libDedication_atu::genera_pdf_prueba($html_conjunto, "Conjunto_{$user->username}_{$params['courseid']}");
+    \libDedication_atu::genera_pdf_prueba($html_conjunto, "Conjunto_{$user->username}_{$params['courseid']}");
     $pdf = ob_get_clean();
 
     // 6) Devolver en Base64
