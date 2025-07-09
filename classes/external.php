@@ -786,7 +786,7 @@ public static function obtener_notas_curso($courseid) {
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
     global $DB, $CFG;
 
-    // 1) Validar parámetros (tu código original, está correcto)
+    // 1) Validación de parámetros
     $params = self::validate_parameters(
         new external_function_parameters([
             'courseid' => new external_value(PARAM_INT, 'ID de curso'),
@@ -795,15 +795,17 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         compact('courseid', 'username')
     );
 
-    // 2) Buscar usuario (tu código original, está correcto)
+    // 2) Buscar usuario
     $user = $DB->get_record('user',
-        ['username' => $params['username']], 'id, firstname, lastname', IGNORE_MISSING
+        ['username' => $params['username']],
+        'id, firstname, lastname',
+        IGNORE_MISSING
     );
     if (!$user) {
         return ['status' => 'error', 'data' => null, 'message' => 'Usuario no existe'];
     }
 
-    // 3) Recoger todos los attemptid "prueba" de ese usuario en el curso (tu código original, está correcto)
+    // 3) Recoger todos los intentos “prueba”
     $clave = 'prueba';
     $sql = "
         SELECT gg.id AS attemptid, gg.quiz
@@ -823,95 +825,101 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         return ['status' => 'error', 'data' => null, 'message' => 'No hay pruebas para este usuario'];
     }
 
-    // Incluimos la librería del otro plugin para usar sus funciones
+    // 4) Cargamos la clase del bloque
     require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
 
-    // ================== INICIO DE LA CORRECCIÓN ==================
-
-    // 4) Definir el bloque de CSS.
-    // Este bloque se copia del fichero 'dedication_atu.php' para asegurar que los PDFs
-    // generados por este endpoint tengan exactamente el mismo estilo visual.
+    // 5) Preparamos el CSS _sin indentación_ y el encabezado
     $css_adicional = <<<ENDP
-    <style>
-        * {
-            box-sizing: border-box;
-            font-family: verdana;
-            font-size: 12px;
-        }
-        table.quizreviewsummary {
+<style>
+* {
+    box-sizing: border-box;
+    font-family: verdana;
+    font-size: 12px;
+}
+table.quizreviewsummary {}
+table.quizreviewsummary tbody th {
+    color: #3e65a0;
+    font-weight: bold;
+    text-align: right;
+    padding-right: 10px;
+}
+table.quizreviewsummary tbody th,
+table.quizreviewsummary tbody td {
+    background-color: #f1f1f1;
+}
+div.que {
+    display: flex;
+    margin-top: 2rem;
+}
+div.info {
+    width: 10rem;
+    height: 10rem;
+    padding: .5em;
+    background-color: #dee2e6;
+    border: 1px solid #cad0d7;
+    margin-right: 2rem;
+    padding: 1rem;
+}
+div.content {}
+div.formulation {
+    width: 35rem;
+    color: #2f6473;
+    background-color: #def2f8;
+    border-color: #d1edf6;
+    padding: 2rem;
+    margin-bottom: 1rem;
+}
+div.outcome {
+    color: #7d5a29;
+    background-color: #fcefdc;
+    border-color: #fbe8cd;
+    padding: 2rem;
+}
+</style>
+ENDP;
 
-        }
-        table.quizreviewsummary tbody th {
-            color: #3e65a0;
-            font-weight: bold;
-            text-align: right;
-            padding-right: 10px;
-        }
-        table.quizreviewsummary tbody th, table.quizreviewsummary tbody td {
-            background-color: #f1f1f1;
-        }
-        div.que {
-            display: flex;
-            margin-top: 2rem;
-        }
-        div.info {
-            width: 10rem;
-            height: 10rem;
-            padding: .5em;
-            background-color: #dee2e6;
-            border: 1px solid #cad0d7;
-            margin-right: 2rem;
-            padding: 1rem;
-        }
-        div.content {
+    $html_conjunto  = $css_adicional;
+    $html_conjunto .= "<h2>Conjunto de pruebas: {$user->firstname} {$user->lastname}</h2>";
 
-        }
-        div.formulation {
-            width: 35rem;
-            color: #2f6473;
-            background-color: #def2f8;
-            border-color: #d1edf6;
-            padding: 2rem;
-            margin-bottom: 1rem;
-        }
-        div.outcome {
-            color: #7d5a29;
-            background-color: #fcefdc;
-            border-color: #fbe8cd;
-            padding: 2rem;
-        }
-    </style>
-    ENDP;
-
-    // 5) Construir el HTML completo, asegurándonos de que empiece con el CSS.
-    $html_conjunto = $css_adicional; // Se añade primero el CSS
-    $html_conjunto .= "<h2>Conjunto de pruebas: {$user->firstname} {$user->lastname}</h2>"; // Luego el título
-
-    // =================== FIN DE LA CORRECCIÓN ====================
-
+    // 6) Vamos acumulando los informes individuales
     foreach ($rs as $r) {
-        // Para cada intento, calculamos su 'course module instance ID' (cm->id).
         $cm = get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
         $instid = $cm->id;
-
-        // Reutilizamos la función del plugin que ya limpia y extrae la parte HTML
         $html_conjunto .= \libDedication_atu::devuelve_informe_respuestas_html(
             $r->attemptid, $instid, $params['courseid']
         );
-
-        // Añadimos un salto de página después de cada prueba
         $html_conjunto .= '<div style="page-break-after: always;"></div>';
     }
 
-    // 6) Generar el PDF usando TCPDF, capturando la salida con ob_start/ob_get_clean
-    ob_start();
-    \libDedication_atu::genera_pdf_prueba($html_conjunto, "Conjunto_{$user->username}_{$params['courseid']}");
-    $pdf_content = ob_get_clean();
+    // 7) Instanciamos TCPDF exactamente como el bloque lo hace
+    $pdf = new MYPDF2(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+    $pdf->SetTitle('Conjunto de pruebas');
+    $pdf->SetProtection(['modify']);
+    $pdf->setPrintHeader(true);
+    $pdf->setPrintFooter(true);
+    $pdf->SetHeaderData(PDF_HEADER_LOGO, PDF_HEADER_LOGO_WIDTH, PDF_HEADER_TITLE, PDF_HEADER_STRING);
+    $pdf->setHeaderFont([PDF_FONT_NAME_MAIN, '', PDF_FONT_SIZE_MAIN]);
+    $pdf->setFooterFont([PDF_FONT_NAME_DATA, '', PDF_FONT_SIZE_DATA]);
+    $pdf->SetFont('helvetica', '', 10);
+    $pdf->SetDefaultMonospacedFont(PDF_FONT_MONOSPACED);
+    $pdf->SetMargins(PDF_MARGIN_LEFT, PDF_MARGIN_TOP, PDF_MARGIN_RIGHT);
+    $pdf->SetHeaderMargin(PDF_MARGIN_HEADER);
+    $pdf->SetFooterMargin(PDF_MARGIN_FOOTER);
+    $pdf->SetAutoPageBreak(true, PDF_MARGIN_BOTTOM);
+    $pdf->setImageScale(PDF_IMAGE_SCALE_RATIO);
 
-    // 7) Devolver el contenido del PDF codificado en Base64
+    // 8) Volcamos el HTML completo
+    $pdf->AddPage();
+    $pdf->writeHTML($html_conjunto, true, false, true, false, '');
+    $pdf->lastPage();
+
+    // 9) Capturamos como string y codificamos
+    $pdf_string = $pdf->Output('', 'S');    // <-- clave: usar 'S' para que devuelva cadena
+    $pdf_base64 = base64_encode($pdf_string);
+
     return [
         'status'  => 'success',
-        'data'    => base64_encode($pdf_content),
+        'data'    => $pdf_base64,
         'message' => 'PDF generado correctamente.'
     ];
 }
