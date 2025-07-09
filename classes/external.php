@@ -786,24 +786,24 @@ public static function obtener_notas_curso($courseid) {
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
     global $DB, $CFG;
 
-    // 1) Validar parámetros…
+    // 1) Validar parámetros (tu código original, está correcto)
     $params = self::validate_parameters(
         new external_function_parameters([
-            'courseid' => new external_value(PARAM_INT,      'ID de curso'),
+            'courseid' => new external_value(PARAM_INT, 'ID de curso'),
             'username' => new external_value(PARAM_USERNAME, 'Username en Moodle'),
         ]),
-        compact('courseid','username')
+        compact('courseid', 'username')
     );
 
-    // 2) Buscar usuario…
+    // 2) Buscar usuario (tu código original, está correcto)
     $user = $DB->get_record('user',
         ['username' => $params['username']], 'id, firstname, lastname', IGNORE_MISSING
     );
     if (!$user) {
-        return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
+        return ['status' => 'error', 'data' => null, 'message' => 'Usuario no existe'];
     }
 
-    // 3) Recoger todos los attemptid “prueba” de ese usuario en el curso
+    // 3) Recoger todos los attemptid "prueba" de ese usuario en el curso (tu código original, está correcto)
     $clave = 'prueba';
     $sql = "
         SELECT gg.id AS attemptid, gg.quiz
@@ -820,37 +820,99 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         'uid'      => $user->id
     ]);
     if (empty($rs)) {
-        return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario'];
+        return ['status' => 'error', 'data' => null, 'message' => 'No hay pruebas para este usuario'];
     }
 
+    // Incluimos la librería del otro plugin para usar sus funciones
     require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
 
-    // 4) Construir el HTML conjunto
-    $html_conjunto  = "<h2>Conjunto de pruebas: {$user->firstname} {$user->lastname}</h2>";
+    // ================== INICIO DE LA CORRECCIÓN ==================
+
+    // 4) Definir el bloque de CSS.
+    // Este bloque se copia del fichero 'dedication_atu.php' para asegurar que los PDFs
+    // generados por este endpoint tengan exactamente el mismo estilo visual.
+    $css_adicional = <<<ENDP
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: verdana;
+            font-size: 12px;
+        }
+        table.quizreviewsummary {
+
+        }
+        table.quizreviewsummary tbody th {
+            color: #3e65a0;
+            font-weight: bold;
+            text-align: right;
+            padding-right: 10px;
+        }
+        table.quizreviewsummary tbody th, table.quizreviewsummary tbody td {
+            background-color: #f1f1f1;
+        }
+        div.que {
+            display: flex;
+            margin-top: 2rem;
+        }
+        div.info {
+            width: 10rem;
+            height: 10rem;
+            padding: .5em;
+            background-color: #dee2e6;
+            border: 1px solid #cad0d7;
+            margin-right: 2rem;
+            padding: 1rem;
+        }
+        div.content {
+
+        }
+        div.formulation {
+            width: 35rem;
+            color: #2f6473;
+            background-color: #def2f8;
+            border-color: #d1edf6;
+            padding: 2rem;
+            margin-bottom: 1rem;
+        }
+        div.outcome {
+            color: #7d5a29;
+            background-color: #fcefdc;
+            border-color: #fbe8cd;
+            padding: 2rem;
+        }
+    </style>
+    ENDP;
+
+    // 5) Construir el HTML completo, asegurándonos de que empiece con el CSS.
+    $html_conjunto = $css_adicional; // Se añade primero el CSS
+    $html_conjunto .= "<h2>Conjunto de pruebas: {$user->firstname} {$user->lastname}</h2>"; // Luego el título
+
+    // =================== FIN DE LA CORRECCIÓN ====================
+
     foreach ($rs as $r) {
-        // para cada intento, calculo su module instanceid
+        // Para cada intento, calculamos su 'course module instance ID' (cm->id).
         $cm = get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
         $instid = $cm->id;
 
-        // reutilizo exactamente tu función que ya limpia y extrae la parte HTML
+        // Reutilizamos la función del plugin que ya limpia y extrae la parte HTML
         $html_conjunto .= \libDedication_atu::devuelve_informe_respuestas_html(
             $r->attemptid, $instid, $params['courseid']
         );
 
-        // salto de página
+        // Añadimos un salto de página después de cada prueba
         $html_conjunto .= '<div style="page-break-after: always;"></div>';
     }
 
-    // 5) Generar el PDF usando TCPDF
+    // 6) Generar el PDF usando TCPDF, capturando la salida con ob_start/ob_get_clean
     ob_start();
     \libDedication_atu::genera_pdf_prueba($html_conjunto, "Conjunto_{$user->username}_{$params['courseid']}");
-    $pdf = ob_get_clean();
+    $pdf_content = ob_get_clean();
 
-    // 6) Devolver en Base64
+    // 7) Devolver el contenido del PDF codificado en Base64
     return [
         'status'  => 'success',
-        'data'    => base64_encode($pdf),
-        'message' => ''
+        'data'    => base64_encode($pdf_content),
+        'message' => 'PDF generado correctamente.'
     ];
 }
 
