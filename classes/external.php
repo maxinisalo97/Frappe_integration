@@ -849,7 +849,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
             $instid = $cm->id;
     
             // Añadimos cada informe parcial (ya limpia y devuelve sólo el <div id="page">…)
-            $html_conjunto .= libDedication_atu::devuelve_informe_respuestas_html(
+            $html_conjunto .= \libDedication_atu::devuelve_informe_respuestas_html(
                 $r->attemptid, $instid, $params['courseid']
             );
     
@@ -859,7 +859,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     
         // 6) Generamos el PDF y lo capturamos en una variable
         ob_start();
-        libDedication_atu::genera_pdf_prueba($html_conjunto, "Conjunto_{$user->username}_{$courseid}");
+        \libDedication_atu::genera_pdf_prueba($html_conjunto, "Conjunto_{$user->username}_{$courseid}");
         $pdf_raw = ob_get_clean();
     
         // 7) Y lo devolvemos en Base64 como espera tu API
