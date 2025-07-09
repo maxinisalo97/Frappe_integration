@@ -786,7 +786,7 @@ public static function obtener_notas_curso($courseid) {
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
     global $DB, $CFG;
 
-    // 1) Validar parámetros
+    // 1) Validar parámetros (tu código original, está correcto)
     $params = self::validate_parameters(
         new external_function_parameters([
             'courseid' => new external_value(PARAM_INT, 'ID de curso'),
@@ -795,7 +795,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         compact('courseid', 'username')
     );
 
-    // 2) Buscar usuario
+    // 2) Buscar usuario (tu código original, está correcto)
     $user = $DB->get_record('user',
         ['username' => $params['username']], 'id, firstname, lastname', IGNORE_MISSING
     );
@@ -803,10 +803,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         return ['status' => 'error', 'data' => null, 'message' => 'Usuario no existe'];
     }
 
-    // 3) Obtener course record
-    $course = $DB->get_record('course', ['id' => $params['courseid']], '*', MUST_EXIST);
-
-    // 4) Recoger todos los attemptid "prueba" de ese usuario en el curso
+    // 3) Recoger todos los attemptid "prueba" de ese usuario en el curso (tu código original, está correcto)
     $clave = 'prueba';
     $sql = "
         SELECT gg.id AS attemptid, gg.quiz
@@ -826,135 +823,51 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         return ['status' => 'error', 'data' => null, 'message' => 'No hay pruebas para este usuario'];
     }
 
-    // Incluimos las librerías necesarias
-    require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
-    require_once($CFG->dirroot . '/lib/tcpdf/tcpdf.php');
+        // 3) Cargamos la librería del bloque para tener acceso a MYPDF2 y a las funciones auxiliares.
+        require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
 
-    // 5) CSS exacto del plugin original
-    $css_adicional = <<<ENDP
+        // 4) Copiamos el CSS que usa dedication_atu para que el estilo sea idéntico.
+        $css_adicional = <<<ENDP
     <style>
-        * {
-            box-sizing: border-box;
-            font-family: verdana;
-            font-size: 12px;
-        }
-        table.quizreviewsummary {
-            
-        }
-        table.quizreviewsummary tbody th {
-            color: #3e65a0;
-            font-weight: bold;
-            text-align: right;
-            padding-right: 10px;
-        }
-        table.quizreviewsummary tbody th, table.quizreviewsummary tbody td {
-            background-color: #f1f1f1;
-        }
-        div.que {
-            display: flex;
-            margin-top: 2rem;
-        }
-        div.info {
-            width: 10rem;
-            height: 10rem;
-            padding: .5em;
-            background-color: #dee2e6;
-            border: 1px solid #cad0d7;
-            margin-right: 2rem;
-            padding: 1rem;
-        }
-        div.content {
-            
-        }
-        div.formulation {
-            width: 35rem;
-            color: #2f6473;
-            background-color: #def2f8;
-            border-color: #d1edf6;
-            padding: 2rem;
-            margin-bottom: 1rem;
-        }
-        div.outcome {
-            color: #7d5a29;
-            background-color: #fcefdc;
-            border-color: #fbe8cd;
-            padding: 2rem;
-        }
+        * { box-sizing: border-box; font-family: verdana; font-size: 12px; }
+        table.quizreviewsummary tbody th { color: #3e65a0; font-weight: bold; text-align: right; padding-right: 10px; }
+        table.quizreviewsummary tbody th, table.quizreviewsummary tbody td { background-color: #f1f1f1; }
+        div.que { display: flex; margin-top: 2rem; }
+        div.info { width: 10rem; height: 10rem; padding: 1rem; background-color: #dee2e6; border: 1px solid #cad0d7; margin-right: 2rem; }
+        div.formulation { width: 35rem; color: #2f6473; background-color: #def2f8; border-color: #d1edf6; padding: 2rem; margin-bottom: 1rem; }
+        div.outcome { color: #7d5a29; background-color: #fcefdc; border-color: #fbe8cd; padding: 2rem; }
     </style>
-ENDP;
-
-    // 6) Construir HTML completo empezando con CSS
-    $html_conjunto = $css_adicional;
-    $html_conjunto .= "<h2>Conjunto de pruebas: {$user->firstname} {$user->lastname}</h2>";
-
-    // 7) Obtener HTML de cada prueba
-    foreach ($rs as $r) {
-        $cm = get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
-        $instid = $cm->id;
-
-        $html_conjunto .= \libDedication_atu::devuelve_informe_respuestas_html(
-            $r->attemptid, $instid, $params['courseid']
-        );
-
-        // Salto de página entre pruebas
-        $html_conjunto .= '<div style="page-break-after: always;"></div>';
+    ENDP;
+    
+        // 5) Preparamos el HTML completo.
+        $html_conjunto  = $css_adicional;
+        $html_conjunto .= "<h2>Conjunto de pruebas: {$user->firstname} {$user->lastname}</h2>";
+    
+        foreach ($rs as $r) {
+            // Recuperamos el course module id (igual que en dedication_atu.php)
+            $cm = get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
+            $instid = $cm->id;
+    
+            // Añadimos cada informe parcial (ya limpia y devuelve sólo el <div id="page">…)
+            $html_conjunto .= libDedication_atu::devuelve_informe_respuestas_html(
+                $r->attemptid, $instid, $params['courseid']
+            );
+    
+            // Forzamos salto de página
+            $html_conjunto .= '<div style="page-break-after: always;"></div>';
+        }
+    
+        // 6) Generamos el PDF y lo capturamos en una variable
+        ob_start();
+        libDedication_atu::genera_pdf_prueba($html_conjunto, "Conjunto_{$user->username}_{$courseid}");
+        $pdf_raw = ob_get_clean();
+    
+        // 7) Y lo devolvemos en Base64 como espera tu API
+        return [
+            'status'  => 'success',
+            'data'    => base64_encode($pdf_raw),
+            'message' => 'PDF generado correctamente.'
+        ];
     }
-
-    // 8) Crear PDF usando la misma configuración que el plugin original
-    // pero modificando para devolver contenido en lugar de enviarlo al navegador
-    $pdf_content = self::generar_pdf_como_string($html_conjunto, $user, $course);
-
-    // 9) Devolver el contenido del PDF codificado en Base64
-    return [
-        'status'  => 'success',
-        'data'    => base64_encode($pdf_content),
-        'message' => 'PDF generado correctamente.'
-    ];
-}
-
-/**
- * Función auxiliar que replica genera_pdf_prueba() pero devuelve el contenido como string
- */
-private static function generar_pdf_como_string($html, $user, $course) {
-    // Usar las mismas constantes y configuración que el plugin original
-    $pdf = new \MYPDF2(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
-    
-    // Configuración exacta del plugin original
-    $pdf->SetTitle('Informe de respuestas de prueba');
-    $pdf->SetProtection(array('modify'));
-    $pdf->setPrintHeader(true);
-    $pdf->setPrintFooter(true);
-    
-    // set default header data
-    $pdf->SetHeaderData(PDF_HEADER_LOGO, PDF_HEADER_LOGO_WIDTH, PDF_HEADER_TITLE, PDF_HEADER_STRING);
-
-    // set header and footer fonts
-    $pdf->setHeaderFont(Array(PDF_FONT_NAME_MAIN, '', PDF_FONT_SIZE_MAIN));
-    $pdf->setFooterFont(Array(PDF_FONT_NAME_DATA, '', PDF_FONT_SIZE_DATA));
-
-    // set default monospaced font
-    $pdf->SetFont('helvetica', '', 10);
-    $pdf->SetDefaultMonospacedFont(PDF_FONT_MONOSPACED);
-
-    // set margins
-    $pdf->SetMargins(PDF_MARGIN_LEFT, PDF_MARGIN_TOP, PDF_MARGIN_RIGHT);
-    $pdf->SetHeaderMargin(PDF_MARGIN_HEADER);
-    $pdf->SetFooterMargin(PDF_MARGIN_FOOTER);
-
-    // set auto page breaks
-    $pdf->SetAutoPageBreak(TRUE, PDF_MARGIN_BOTTOM);
-
-    // set image scale factor
-    $pdf->setImageScale(PDF_IMAGE_SCALE_RATIO);
-
-    $pdf->AddPage();
-
-    $pdf->writeHTML($html, true, false, true, false, '');
-    $pdf->lastPage();
-    
-    // CLAVE: Usar 'S' para devolver como string en lugar de 'I' para enviar al navegador
-    return $pdf->Output('', 'S');
-}
-
 
 }
