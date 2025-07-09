@@ -786,11 +786,11 @@ public static function obtener_notas_curso($courseid) {
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
     global $CFG, $DB;
 
-    // 1) Validar parámetros
+    // 1) Validar parámetros usando PARAM_USERNAME
     $params = self::validate_parameters(
         new external_function_parameters([
             'courseid' => new external_value(PARAM_INT, 'ID de curso'),
-            'username' => new external_value(PARAM_ALPHANUMEXT, 'Username en Moodle'),
+            'username' => new external_value(PARAM_USERNAME, 'Username en Moodle'),
         ]),
         compact('courseid','username')
     );
@@ -824,40 +824,40 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario'];
     }
 
-    // 4) Obtener el instanceid de block_dedication_atu para este curso
-    $coursecontext = \context_course::instance($params['courseid']);
-    $blockinstance = $DB->get_record('block_instances', [
+    // 4) Obtener el instanceid del bloque dedication_atu
+    $coursecontext  = \context_course::instance($params['courseid']);
+    $blockinstance  = $DB->get_record('block_instances', [
         'blockname'       => 'dedication_atu',
         'parentcontextid' => $coursecontext->id
     ], 'id', MUST_EXIST);
-    $instanceid = $blockinstance->id;
+    $instanceid     = $blockinstance->id;
 
     // 5) Simular $_GET para invocar dedication_atu.php en modo PDF conjunto
     $_GET = [
-        'courseid'     => $params['courseid'],
-        'instanceid'   => $instanceid,
-        'task'         => 'pdf_conjunto_pruebas',
-        'modo_pdf'     => 1,
-        // se envía como un array de IDs
-        'attemptid'    => array_map(function($r) { return $r->attemptid; }, $rs),
+        'courseid'   => $params['courseid'],
+        'instanceid' => $instanceid,
+        'task'       => 'pdf_conjunto_pruebas',
+        'modo_pdf'   => 1,
+        'attemptid'  => array_map(function($r) { return $r->attemptid; }, $rs),
     ];
 
-    // 6) Incluir configuraciones / permisos de Moodle
+    // 6) Montar contexto y permisos de Moodle
     require_once($CFG->dirroot . '/config.php');
     $course = $DB->get_record('course', ['id' => $params['courseid']], '*', MUST_EXIST);
     require_course_login($course);
 
-    // 7) Capturar la salida PDF de dedication_atu.php
+    // 7) Capturar el PDF tal cual lo genera dedication_atu.php
     ob_start();
     require_once($CFG->dirroot . '/blocks/dedication_atu/dedication_atu.php');
     $pdfraw = ob_get_clean();
 
-    // 8) Devolverlo codificado en Base64
+    // 8) Devolver en Base64
     return [
         'status'  => 'success',
         'data'    => base64_encode($pdfraw),
         'message' => 'PDF generado correctamente.'
     ];
 }
+
 
 }
