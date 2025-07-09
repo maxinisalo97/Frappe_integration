@@ -856,7 +856,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
             // Forzamos salto de página
             $html_conjunto .= '<div style="page-break-after: always;"></div>';
         }
-    
+        //
         // 6) Generamos el PDF y lo capturamos en una variable
         ob_start();
         \libDedication_atu::genera_pdf_prueba($html_conjunto, "Conjunto_{$user->username}_{$courseid}");
