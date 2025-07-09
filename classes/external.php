@@ -920,7 +920,7 @@ HTML;
         $pdf_contenido_raw = ob_get_clean();
 
         if (empty($pdf_contenido_raw)) {
-            throw new moodle_exception('pdfgenerationfailed', 'core', '', null, 'La generación del PDF no produjo ningún contenido.');
+            throw new \moodle_exception('pdfgenerationfailed', 'core', '', null, 'La generación del PDF no produjo ningún contenido.');
         }
 
         // 7) Devolver la respuesta final en el formato esperado por la API.
