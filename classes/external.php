@@ -784,90 +784,80 @@ public static function obtener_notas_curso($courseid) {
     ];
 }
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
-    global $DB, $CFG;
+    global $CFG, $DB;
 
-    // 1) Validar parámetros (tu código original, está correcto)
+    // 1) Validar parámetros
     $params = self::validate_parameters(
         new external_function_parameters([
             'courseid' => new external_value(PARAM_INT, 'ID de curso'),
             'username' => new external_value(PARAM_USERNAME, 'Username en Moodle'),
         ]),
-        compact('courseid', 'username')
+        compact('courseid','username')
     );
 
-    // 2) Buscar usuario (tu código original, está correcto)
+    // 2) Buscar usuario
     $user = $DB->get_record('user',
-        ['username' => $params['username']], 'id, firstname, lastname', IGNORE_MISSING
+        ['username' => $params['username']],
+        'id, firstname, lastname',
+        IGNORE_MISSING
     );
     if (!$user) {
-        return ['status' => 'error', 'data' => null, 'message' => 'Usuario no existe'];
+        return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
     }
 
-    // 3) Recoger todos los attemptid "prueba" de ese usuario en el curso (tu código original, está correcto)
-    $clave = 'prueba';
-    $sql = "
-        SELECT gg.id AS attemptid, gg.quiz
+    // 3) Recoger todos los attempt IDs "prueba"
+    $rs = $DB->get_records_sql("
+        SELECT gg.id AS attemptid
           FROM {quiz_attempts} gg
-          JOIN {grade_items} gi ON gi.iteminstance = gg.quiz
-         WHERE gi.courseid = :courseid
-           AND gi.itemname LIKE :like
-           AND gg.userid = :uid
-         ORDER BY gg.attempt
-    ";
-    $rs = $DB->get_records_sql($sql, [
-        'courseid' => $params['courseid'],
-        'like'     => "%{$clave}%",
-        'uid'      => $user->id
+          JOIN {grade_items} gi
+            ON gi.iteminstance = gg.quiz
+         WHERE gi.courseid = :c
+           AND gi.itemname LIKE :klike
+           AND gg.userid = :u
+      ORDER BY gg.attempt
+    ", [
+        'c'     => $params['courseid'],
+        'klike' => '%prueba%',
+        'u'     => $user->id
     ]);
     if (empty($rs)) {
-        return ['status' => 'error', 'data' => null, 'message' => 'No hay pruebas para este usuario'];
+        return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario'];
     }
 
-        // 3) Cargamos la librería del bloque para tener acceso a MYPDF2 y a las funciones auxiliares.
-        require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
+    // 4) Obtener el instanceid de block_dedication_atu para este curso
+    $coursecontext = \context_course::instance($params['courseid']);
+    $blockinstance = $DB->get_record('block_instances', [
+        'blockname'       => 'dedication_atu',
+        'parentcontextid' => $coursecontext->id
+    ], 'id', MUST_EXIST);
+    $instanceid = $blockinstance->id;
 
-        // 4) Copiamos el CSS que usa dedication_atu para que el estilo sea idéntico.
-        $css_adicional = <<<ENDP
-    <style>
-        * { box-sizing: border-box; font-family: verdana; font-size: 12px; }
-        table.quizreviewsummary tbody th { color: #3e65a0; font-weight: bold; text-align: right; padding-right: 10px; }
-        table.quizreviewsummary tbody th, table.quizreviewsummary tbody td { background-color: #f1f1f1; }
-        div.que { display: flex; margin-top: 2rem; }
-        div.info { width: 10rem; height: 10rem; padding: 1rem; background-color: #dee2e6; border: 1px solid #cad0d7; margin-right: 2rem; }
-        div.formulation { width: 35rem; color: #2f6473; background-color: #def2f8; border-color: #d1edf6; padding: 2rem; margin-bottom: 1rem; }
-        div.outcome { color: #7d5a29; background-color: #fcefdc; border-color: #fbe8cd; padding: 2rem; }
-    </style>
-    ENDP;
-    
-        // 5) Preparamos el HTML completo.
-        $html_conjunto  = $css_adicional;
-        $html_conjunto .= "<h2>Conjunto de pruebas: {$user->firstname} {$user->lastname}</h2>";
-    
-        foreach ($rs as $r) {
-            // Recuperamos el course module id (igual que en dedication_atu.php)
-            $cm = get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
-            $instid = $cm->id;
-    
-            // Añadimos cada informe parcial (ya limpia y devuelve sólo el <div id="page">…)
-            $html_conjunto .= \libDedication_atu::devuelve_informe_respuestas_html(
-                $r->attemptid, $instid, $params['courseid']
-            );
-    
-            // Forzamos salto de página
-            $html_conjunto .= '<div style="page-break-after: always;"></div>';
-        }
-    
-        // 6) Generamos el PDF y lo capturamos en una variable
-        ob_start();
-        \libDedication_atu::genera_pdf_prueba($html_conjunto, "Conjunto_{$user->username}_{$courseid}");
-        $pdf_raw = ob_get_clean();
-    
-        // 7) Y lo devolvemos en Base64 como espera tu API
-        return [
-            'status'  => 'success',
-            'data'    => base64_encode($pdf_raw),
-            'message' => 'PDF generado correctamente.'
-        ];
-    }
+    // 5) Simular $_GET para invocar dedication_atu.php en modo PDF conjunto
+    $_GET = [
+        'courseid'     => $params['courseid'],
+        'instanceid'   => $instanceid,
+        'task'         => 'pdf_conjunto_pruebas',
+        'modo_pdf'     => 1,
+        // se envía como un array de IDs
+        'attemptid'    => array_map(function($r) { return $r->attemptid; }, $rs),
+    ];
+
+    // 6) Incluir configuraciones / permisos de Moodle
+    require_once($CFG->dirroot . '/config.php');
+    $course = $DB->get_record('course', ['id' => $params['courseid']], '*', MUST_EXIST);
+    require_course_login($course);
+
+    // 7) Capturar la salida PDF de dedication_atu.php
+    ob_start();
+    require_once($CFG->dirroot . '/blocks/dedication_atu/dedication_atu.php');
+    $pdfraw = ob_get_clean();
+
+    // 8) Devolverlo codificado en Base64
+    return [
+        'status'  => 'success',
+        'data'    => base64_encode($pdfraw),
+        'message' => 'PDF generado correctamente.'
+    ];
+}
 
 }
