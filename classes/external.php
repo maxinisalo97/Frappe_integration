@@ -840,7 +840,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
 
     // 5) Generar el PDF “en memoria” y devolverlo como string.
     //    Inspirado en la librería de dedication_atu: MYPDF2 extiende TCPDF.
-    $pdf = new MYPDF2(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+    $pdf = new \MYPDF2(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
     // ajustar header/footer como en libDedication_atu::genera_pdf_prueba()
     $pdf->SetTitle('Conjunto de pruebas');
     $pdf->SetProtection(array('modify'));
