@@ -919,10 +919,6 @@ HTML;
         \libDedication_atu::genera_pdf_prueba($html_completo, "Conjunto_{$user->username}_{$courseid}");
         $pdf_contenido_raw = ob_get_clean();
 
-        if (empty($pdf_contenido_raw)) {
-            throw new \moodle_exception('pdfgenerationfailed', 'core', '', null, 'La generación del PDF no produjo ningún contenido.');
-        }
-
         // 7) Devolver la respuesta final en el formato esperado por la API.
         // El contenido del PDF se codifica en Base64 para su transmisión segura.
         return [
