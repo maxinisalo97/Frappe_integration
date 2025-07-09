@@ -783,161 +783,94 @@ public static function obtener_notas_curso($courseid) {
         'message'=> ''
     ];
 }
+public static function generar_pdf_conjunto_usuario($courseid, $username) {
+    global $DB, $CFG;
 
-    /**
-     * Define los parámetros para la función generar_pdf_conjunto_usuario.
-     * @return external_function_parameters
-     */
-    public static function generar_pdf_conjunto_usuario_parameters() {
-        return new external_function_parameters([
-            'courseid' => new external_value(PARAM_INT, 'ID del curso.'),
-            'username' => new external_value(PARAM_USERNAME, 'Nombre de usuario del estudiante.'),
-        ]);
+    // 1) Validar parámetros.
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'courseid' => new external_value(PARAM_INT,      'ID de curso'),
+            'username' => new external_value(PARAM_USERNAME, 'Username en Moodle'),
+        ]),
+        compact('courseid','username')
+    );
+
+    // 2) Buscar usuario.
+    $user = $DB->get_record('user',
+        ['username' => $params['username']],
+        'id, firstname, lastname',
+        IGNORE_MISSING
+    );
+    if (!$user) {
+        return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
     }
 
-    /**
-     * Genera un único PDF que combina todos los informes de "prueba" para un usuario en un curso.
-     * @param int $courseid
-     * @param string $username
-     * @return array
-     */
-    public static function generar_pdf_conjunto_usuario($courseid, $username) {
-        global $DB, $CFG;
-
-        // 1) Validar los parámetros de entrada.
-        // Esto asegura que los tipos de datos son correctos antes de usarlos.
-        $params = self::validate_parameters(self::generar_pdf_conjunto_usuario_parameters(), [
-            'courseid' => $courseid,
-            'username' => $username
-        ]);
-
-        // 2) Buscar al usuario en la base de datos de Moodle.
-        $user = $DB->get_record('user', ['username' => $params['username']], 'id, firstname, lastname', IGNORE_MISSING);
-        if (!$user) {
-            // Si el usuario no existe, devolvemos un error claro.
-            throw new invalid_parameter_exception('El usuario especificado no existe.');
-        }
-
-        // 3) Recoger todos los intentos de cuestionarios cuyo nombre contenga "prueba".
-        // Esta es la consulta clave para encontrar los intentos que queremos combinar.
-        $clave_busqueda = 'prueba';
-        $sql = "
-            SELECT qa.id AS attemptid, qa.quiz
-              FROM {quiz_attempts} qa
-              JOIN {grade_items} gi ON gi.iteminstance = qa.quiz AND gi.itemmodule = 'quiz'
-             WHERE gi.courseid = :courseid
-               AND gi.itemname LIKE :like
-               AND qa.userid = :userid
-             ORDER BY qa.timestart, qa.attempt
-        ";
-        $intentos = $DB->get_records_sql($sql, [
-            'courseid' => $params['courseid'],
-            'like'     => "%{$clave_busqueda}%",
-            'userid'   => $user->id
-        ]);
-
-        if (empty($intentos)) {
-            // Si no hay intentos que cumplan la condición, informamos del problema.
-            throw new moodle_exception('notenoughdata', 'quiz', '', null, 'No se encontraron pruebas para este usuario en el curso especificado.');
-        }
-
-        // 4) Cargar la librería del bloque `dedication_atu` para acceder a sus funciones.
-        // Es fundamental para poder reutilizar su lógica de generación de informes y PDFs.
-        $lib_path = $CFG->dirroot . '/blocks/dedication_atu/lib.php';
-        if (!file_exists($lib_path)) {
-             throw new moodle_exception('invaliddblockfile', 'block_dedication_atu', '', null, 'No se encuentra el fichero lib.php del bloque dedication_atu.');
-        }
-        require_once($lib_path);
-        
-        // Verificamos que las funciones que vamos a usar existen.
-        if (!function_exists('\libDedication_atu::devuelve_informe_respuestas_html') || !function_exists('\libDedication_atu::genera_pdf_prueba')) {
-            throw new moodle_exception('undefinedfunction', 'block_dedication_atu', '', null, 'Las funciones necesarias de lib.php no están disponibles.');
-        }
-
-        // 5) Preparar el contenido HTML que se convertirá en PDF.
-        // Primero, el CSS para que el estilo sea idéntico al del bloque original.
-        $css = <<<HTML
-<style>
-    * { box-sizing: border-box; font-family: sans-serif; font-size: 11px; }
-    body { margin: 2cm; }
-    h2 { font-size: 1.5em; color: #333; border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-bottom: 20px; }
-    table.quizreviewsummary { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
-    table.quizreviewsummary th, table.quizreviewsummary td { border: 1px solid #ddd; padding: 8px; background-color: #f9f9f9; }
-    table.quizreviewsummary th { color: #3e65a0; font-weight: bold; text-align: right; padding-right: 10px; width: 30%; }
-    div.que { border: 1px solid #cad0d7; margin-top: 2rem; background-color: #fff; padding: 1rem; }
-    div.info { width: 10rem; height: auto; padding: 1rem; background-color: #dee2e6; border: 1px solid #cad0d7; margin-bottom: 1rem; }
-    div.formulation { width: 100%; color: #2f6473; background-color: #def2f8; border: 1px solid #d1edf6; padding: 1rem; margin-bottom: 1rem; }
-    div.outcome { width: 100%; color: #7d5a29; background-color: #fcefdc; border: 1px solid #fbe8cd; padding: 1rem; }
-    .page-break { page-break-after: always; }
-</style>
-HTML;
-
-        // Segundo, el cuerpo del documento, iterando sobre cada intento.
-        $html_cuerpo = "<h2>Conjunto de pruebas: {$user->firstname} {$user->lastname}</h2>";
-        $total_intentos = count($intentos);
-        $contador = 0;
-
-        foreach ($intentos as $intento) {
-            $contador++;
-            
-            // Obtenemos el ID del módulo del curso (cmid), necesario para la función.
-            $cm = get_coursemodule_from_instance('quiz', $intento->quiz, $params['courseid'], false, MUST_EXIST);
-
-            // Llamamos a la función de la librería para obtener el HTML de un solo informe.
-            // Esta función debe devolver solo el fragmento de HTML del informe.
-            $html_cuerpo .= \libDedication_atu::devuelve_informe_respuestas_html(
-                $intento->attemptid,
-                $cm->id,
-                $params['courseid']
-            );
-
-            // Añadimos un salto de página después de cada informe, excepto en el último.
-            if ($contador < $total_intentos) {
-                $html_cuerpo .= '<div class="page-break"></div>';
-            }
-        }
-
-        // Tercero, ensamblamos el documento HTML final y completo.
-        $html_completo = <<<HTML
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF--8">
-    <title>Conjunto de pruebas</title>
-    {$css}
-</head>
-<body>
-    {$html_cuerpo}
-</body>
-</html>
-HTML;
-        
-        // 6) Generar el PDF usando la función de la librería y capturar su salida.
-        // Usamos ob_start/ob_get_clean porque la función del bloque probablemente
-        // imprime el PDF directamente en lugar de devolverlo como una variable.
-        ob_start();
-        \libDedication_atu::genera_pdf_prueba($html_completo, "Conjunto_{$user->username}_{$courseid}");
-        $pdf_contenido_raw = ob_get_clean();
-
-        // 7) Devolver la respuesta final en el formato esperado por la API.
-        // El contenido del PDF se codifica en Base64 para su transmisión segura.
-        return [
-            'status'  => 'success',
-            'data'    => base64_encode($pdf_contenido_raw),
-            'message' => 'PDF generado correctamente con ' . $total_intentos . ' informe(s).'
-        ];
+    // 3) Recoger todos los attemptid “prueba” de ese usuario en el curso.
+    $rs = $DB->get_records_sql("
+        SELECT qa.id AS attemptid, qa.quiz
+          FROM {quiz_attempts} qa
+          JOIN {grade_items}   gi ON gi.iteminstance = qa.quiz
+         WHERE gi.courseid   = :c
+           AND gi.itemname LIKE :k
+           AND qa.userid     = :u
+      ORDER BY qa.attempt
+    ", [
+        'c' => $params['courseid'],
+        'k' => '%prueba%',
+        'u' => $user->id
+    ]);
+    if (empty($rs)) {
+        return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario'];
     }
-    
-    /**
-     * Define el tipo de dato que devuelve la función.
-     * @return external_description
-     */
-    public static function generar_pdf_conjunto_usuario_returns() {
-        return new external_single_structure([
-            'status'  => new external_value(PARAM_TEXT, 'Estado de la operación: "success" o "error".'),
-            'data'    => new external_value(PARAM_BASE64, 'Contenido del PDF codificado en Base64.', VALUE_OPTIONAL),
-            'message' => new external_value(PARAM_TEXT, 'Mensaje descriptivo del resultado.'),
-        ]);
+
+    // 4) Montar el HTML combinado.
+    require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
+    // Aquí puedes añadir un título o CSS adicional si quieres.
+    $html = "<h2>Conjunto de pruebas: "
+          . fullname($user) . "</h2>";
+    foreach ($rs as $r) {
+        // recuperar cmid
+        $cm = get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
+        $html .= libDedication_atu::devuelve_informe_respuestas_html(
+            $r->attemptid, $cm->id, $params['courseid']
+        );
+        // salto de página
+        $html .= '<div style="page-break-after: always;"></div>';
     }
+
+    // 5) Generar el PDF “en memoria” y devolverlo como string.
+    //    Inspirado en la librería de dedication_atu: MYPDF2 extiende TCPDF.
+    $pdf = new MYPDF2(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+    // ajustar header/footer como en libDedication_atu::genera_pdf_prueba()
+    $pdf->SetTitle('Conjunto de pruebas');
+    $pdf->SetProtection(array('modify'));
+    $pdf->setPrintHeader(true);
+    $pdf->setPrintFooter(true);
+    $pdf->SetHeaderData(PDF_HEADER_LOGO, PDF_HEADER_LOGO_WIDTH, PDF_HEADER_TITLE, PDF_HEADER_STRING);
+    $pdf->setHeaderFont([PDF_FONT_NAME_MAIN, '', PDF_FONT_SIZE_MAIN]);
+    $pdf->setFooterFont([PDF_FONT_NAME_DATA, '', PDF_FONT_SIZE_DATA]);
+    $pdf->SetDefaultMonospacedFont(PDF_FONT_MONOSPACED);
+    $pdf->SetMargins(PDF_MARGIN_LEFT, PDF_MARGIN_TOP, PDF_MARGIN_RIGHT);
+    $pdf->SetHeaderMargin(PDF_MARGIN_HEADER);
+    $pdf->SetFooterMargin(PDF_MARGIN_FOOTER);
+    $pdf->SetAutoPageBreak(TRUE, PDF_MARGIN_BOTTOM);
+    $pdf->setImageScale(PDF_IMAGE_SCALE_RATIO);
+
+    $pdf->AddPage();
+    $pdf->SetFont('helvetica','',10);
+    $pdf->writeHTML($html, true, false, true, false, '');
+    $pdf->lastPage();
+
+    // *** Aquí: Output en variable con el parámetro 'S' ***
+    $rawpdf = $pdf->Output('', 'S');
+
+    // 6) Y lo devolvemos en Base64 para tu API REST.
+    return [
+        'status'  => 'success',
+        'data'    => base64_encode($rawpdf),
+        'message' => 'PDF generado correctamente.'
+    ];
+}
+
 
 }
