@@ -5,6 +5,7 @@ defined('MOODLE_INTERNAL') || die();
 require_once($CFG->libdir . '/externallib.php');
 require_once($CFG->libdir . '/gradelib.php');
 require_once(__DIR__ . '/../locallib.php');
+require_once($CFG->dirroot . '/course/lib.php');
 $blockdir = \core_component::get_plugin_directory('block', 'dedication_atu');
 require_once($blockdir . '/models/course.php');
 require_once($blockdir . '/dedication_atu_lib.php'); // aquí se define el manager y la constante por defecto
@@ -56,6 +57,7 @@ class external extends external_api {
             'seguimiento_curso'              => 'seguimiento_curso',
             'generar_excel_seguimiento'      => 'generar_excel_seguimiento',
             'obtener_notas_curso'            => 'obtener_notas_curso',
+            'generar_pdf_conjunto_usuario'   => 'generar_pdf_conjunto_usuario',
         ];
 
         if (!isset($allowed[$params['method']])) {
@@ -779,6 +781,76 @@ public static function obtener_notas_curso($courseid) {
             'users' => $result,
         ],
         'message'=> ''
+    ];
+}
+public static function generar_pdf_conjunto_usuario($courseid, $username) {
+    global $DB, $CFG;
+
+    // 1) Validar parámetros…
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'courseid' => new external_value(PARAM_INT,      'ID de curso'),
+            'username' => new external_value(PARAM_USERNAME, 'Username en Moodle'),
+        ]),
+        compact('courseid','username')
+    );
+
+    // 2) Buscar usuario…
+    $user = $DB->get_record('user',
+        ['username' => $params['username']], 'id, firstname, lastname', IGNORE_MISSING
+    );
+    if (!$user) {
+        return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
+    }
+
+    // 3) Recoger todos los attemptid “prueba” de ese usuario en el curso
+    $clave = 'prueba';
+    $sql = "
+        SELECT gg.id AS attemptid, gg.quiz
+          FROM {quiz_attempts} gg
+          JOIN {grade_items} gi ON gi.iteminstance = gg.quiz
+         WHERE gi.courseid = :courseid
+           AND gi.itemname LIKE :like
+           AND gg.userid = :uid
+         ORDER BY gg.attempt
+    ";
+    $rs = $DB->get_records_sql($sql, [
+        'courseid' => $params['courseid'],
+        'like'     => "%{$clave}%",
+        'uid'      => $user->id
+    ]);
+    if (empty($rs)) {
+        return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario'];
+    }
+
+    require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
+
+    // 4) Construir el HTML conjunto
+    $html_conjunto  = "<h2>Conjunto de pruebas: {$user->firstname} {$user->lastname}</h2>";
+    foreach ($rs as $r) {
+        // para cada intento, calculo su module instanceid
+        $cm = get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
+        $instid = $cm->id;
+
+        // reutilizo exactamente tu función que ya limpia y extrae la parte HTML
+        $html_conjunto .= libDedication_atu::devuelve_informe_respuestas_html(
+            $r->attemptid, $instid, $params['courseid']
+        );
+
+        // salto de página
+        $html_conjunto .= '<div style="page-break-after: always;"></div>';
+    }
+
+    // 5) Generar el PDF usando TCPDF
+    ob_start();
+    libDedication_atu::genera_pdf_prueba($html_conjunto, "Conjunto_{$user->username}_{$params['courseid']}");
+    $pdf = ob_get_clean();
+
+    // 6) Devolver en Base64
+    return [
+        'status'  => 'success',
+        'data'    => base64_encode($pdf),
+        'message' => ''
     ];
 }
 
