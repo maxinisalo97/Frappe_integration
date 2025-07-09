@@ -790,7 +790,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     $params = self::validate_parameters(
         new external_function_parameters([
             'courseid' => new external_value(PARAM_INT, 'ID de curso'),
-            'username' => new external_value(PARAM_USERNAME, 'Username en Moodle'),
+            'username' => new external_value(PARAM_ALPHANUMEXT, 'Username en Moodle'),
         ]),
         compact('courseid','username')
     );
