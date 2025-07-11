@@ -814,14 +814,32 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     global $DB, $CFG, $PAGE, $OUTPUT, $USER; // Aseguramos que las globales de Moodle estén disponibles
 
     // 1) Validar parámetros
-    $params = self::validate_parameters(/* ... */);
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'courseid' => new external_value(PARAM_INT, 'ID de curso'),
+            'username' => new external_value(PARAM_USERNAME, 'Username'),
+        ]),
+        ['courseid' => $courseid, 'username' => $username] // Este array es el que faltaba
+    );
     $user = $DB->get_record('user', ['username' => $params['username']], 'id, firstname, lastname', IGNORE_MISSING);
-    if (!$user) { /* ... error ... */ }
+    if (!$user) {
+        return ['status' => 'error', 'data' => null, 'message' => 'Usuario no existe'];
+    }
 
-    // 2) Recopilar los IDs de los intentos
-    $quiz_attempts_records = $DB->get_records_sql(/* ... tu SQL para obtener attempts ... */);
-    if (empty($quiz_attempts_records)) { /* ... error ... */ }
-    
+    $quiz_attempts_records = $DB->get_records_sql("
+        SELECT qa.id AS attemptid, qa.quiz
+          FROM {quiz_attempts} qa
+          JOIN {grade_items} gi ON gi.iteminstance = qa.quiz
+         WHERE gi.courseid = :courseid AND gi.itemname LIKE :keyword AND qa.userid = :userid
+         ORDER BY qa.attempt
+    ", [
+        'courseid' => $params['courseid'],
+        'keyword'  => '%prueba%',
+        'userid'   => $user->id
+    ]);
+    if (empty($quiz_attempts_records)) {
+        return ['status' => 'error', 'data' => null, 'message' => 'No hay pruebas para este usuario.'];
+    }
     // Extraemos solo los IDs a un array simple
     $attemptids = array_keys($quiz_attempts_records);
 
