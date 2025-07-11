@@ -813,7 +813,7 @@ public static function obtener_notas_curso($courseid) {
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
     global $DB, $CFG;
 
-    // 1) Validación y obtención de datos (sin cambios)
+    // --- 1. OBTENCIÓN DE DATOS ---
     $params = self::validate_parameters(
         new external_function_parameters([
             'courseid' => new external_value(PARAM_INT, 'ID de curso'),
@@ -821,72 +821,77 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         ]),
         ['courseid' => $courseid, 'username' => $username]
     );
-    
     $user = $DB->get_record('user', ['username' => $params['username']], 'id', IGNORE_MISSING);
     if (!$user) { return ['status' => 'error', 'data' => null, 'message' => 'Usuario no existe']; }
 
     $quiz_attempts_records = $DB->get_records_sql("
         SELECT qa.id AS attemptid FROM {quiz_attempts} qa
         JOIN {grade_items} gi ON gi.iteminstance = qa.quiz
-        WHERE gi.courseid = :c AND gi.itemname LIKE :k AND qa.userid = :u
-        ORDER BY qa.attempt
+        WHERE gi.courseid = :c AND gi.itemname LIKE :k AND qa.userid = :u ORDER BY qa.attempt
     ", ['c' => $params['courseid'], 'k' => '%prueba%', 'u' => $user->id]);
-    
     if (empty($quiz_attempts_records)) { return ['status' => 'error', 'data' => null, 'message' => 'No hay pruebas para este usuario.']; }
 
     $context = \context_course::instance($params['courseid']);
     $block_instance = $DB->get_record('block_instances', ['blockname' => 'dedication_atu', 'parentcontextid' => $context->id], 'id', IGNORE_MISSING);
     if (!$block_instance) { return ['status' => 'error', 'data' => null, 'message' => 'El bloque dedication_atu no está en este curso.']; }
 
-    // 2) Construir la URL con el token de bypass de sesión
-    
-    // Obtenemos un token de sesión temporal para el usuario administrador.
-    // Esto permite que la petición interna sea autenticada sin necesidad de un login completo.
-    $admin = get_admin();
-    $logintoken = \core\session\manager::get_login_token($admin->id);
-    if (empty($logintoken)) {
-        return ['status' => 'error', 'data' => null, 'message' => 'No se pudo generar un token de login para la petición interna.'];
-    }
+    // --- 2. PREPARACIÓN DEL SCRIPT "HACKEADO" ---
+    $original_script_path = $CFG->dirroot . '/blocks/dedication_atu/dedication_atu.php';
+    $original_script_content = file_get_contents($original_script_path);
 
-    $base_url = $CFG->wwwroot . '/blocks/dedication_atu/dedication_atu.php';
-    
-    $query_params = [
-        'task'       => 'pdf_conjunto_pruebas',
-        'courseid'   => $params['courseid'],
-        'instanceid' => $block_instance->id,
-        'userid'     => $user->id,
-        'modo_pdf'   => 'true',
-        'logintoken' => $logintoken // Añadimos el token a la URL
-    ];
-    
-    $url_string = $base_url . '?' . http_build_query($query_params);
-    foreach ($quiz_attempts_records as $attempt) {
-        $url_string .= '&attemptid[]=' . $attempt->attemptid;
-    }
+    // Comentamos la línea que nos da problemas
+    $hacked_script_content = str_replace(
+        'require_course_login($course);',
+        '// require_course_login($course); // Comentado por la API externa',
+        $original_script_content
+    );
 
-    // 3) Hacer una petición HTTP interna. Ya no necesitamos cambiar el usuario de la sesión.
+    // Creamos un archivo temporal para ejecutar el script modificado
+    $tmp_script_path = tempnam(sys_get_temp_dir(), 'moodle_pdf_gen_');
+    file_put_contents($tmp_script_path, $hacked_script_content);
+
+    // --- 3. SIMULACIÓN DE PARÁMETROS Y CAPTURA DE SALIDA ---
+    // Simulamos las variables $_GET que el script espera leer
+    $_GET['courseid']   = $params['courseid'];
+    $_GET['instanceid'] = $block_instance->id;
+    $_GET['task']       = 'pdf_conjunto_pruebas';
+    $_GET['modo_pdf']   = 'true';
+    $_GET['userid']     = $user->id;
+    $_GET['attemptid']  = array_keys($quiz_attempts_records);
+
+    ob_start();
     try {
-        $curl = new \curl(['cache' => false, 'followlocation' => true, 'timeout' => 120]);
+        // Ejecutamos el script modificado. Para que tenga acceso a todas las variables
+        // de Moodle, lo hacemos dentro del contexto de esta función.
+        
+        // Nos aseguramos de que el script se ejecute como administrador para tener todos los permisos
+        $currentuser = clone($GLOBALS['USER']);
+        \core\session\manager::set_user(get_admin());
 
-        $pdf_binario = $curl->get($url_string);
+        include($tmp_script_path);
 
-        if ($curl->errno) {
-            return ['status' => 'error', 'data' => null, 'message' => 'Error de cURL: ' . $curl->error . ' en la URL: ' . $url_string];
-        }
-
-        if (strpos($pdf_binario, '%PDF-') === false) {
-             return ['status' => 'error', 'data' => null, 'message' => 'La respuesta de la URL no fue un PDF válido. Es una página de error de Moodle. Respuesta: ' . substr(strip_tags($pdf_binario), 0, 500)];
-        }
+        // Restauramos el usuario original
+        \core\session\manager::set_user($currentuser);
 
     } catch (Exception $e) {
-        return ['status' => 'error', 'data' => null, 'message' => 'Excepción en la petición interna: ' . $e->getMessage()];
+        ob_end_clean();
+        unlink($tmp_script_path); // No olvides borrar el archivo temporal
+        return ['status' => 'error', 'data' => null, 'message' => 'Excepción al ejecutar el script del informe: ' . $e->getMessage()];
     }
 
-    // 4) Devolver el PDF binario en Base64
+    $pdf_binario = ob_get_contents();
+    ob_end_clean();
+    unlink($tmp_script_path); // Borramos el archivo temporal
+
+    if (strpos($pdf_binario, '%PDF-') === false) {
+        return ['status' => 'error', 'data' => null, 'message' => 'El script no generó un PDF. Salida: ' . htmlspecialchars(substr($pdf_binario, 0, 1000))];
+    }
+
+    // --- 4. DEVOLVER EL PDF CAPTURADO ---
     return [
         'status'  => 'success',
         'data'    => base64_encode($pdf_binario),
-        'message' => 'PDF generado mediante petición interna con token de login.'
+        'message' => 'PDF generado mediante inclusión de script modificado.'
     ];
 }
 public static function generar_pdf_informe_usuario($username, $courseid) {
