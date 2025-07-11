@@ -29,22 +29,6 @@ require_once($blockdir . '/lib.php');
 // CLASES TCPDF
 // -----------------------------------------------------------------------------
 /**
- * Para los informes de un único usuario (con salto de página).
- */
-class MYPDF2 extends \TCPDF {
-    public function Header() {}
-    public function Footer() {
-        $this->SetY(-15);
-        $this->SetFont('helvetica','I',8);
-        $this->Cell(
-            0, 10,
-            'Página '.$this->getAliasNumPage().'/'.$this->getAliasNbPages(),
-            0, false, 'C', 0, '', 0, false, 'T', 'M'
-        );
-    }
-}
-
-/**
  * Para el ZIP de varios informes de grupo.
  */
 class MYPDF extends \TCPDF {
@@ -875,7 +859,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     }
 
     // 5) Generar PDF “en memoria”
-    $pdf = new \MYPDF2(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+    $pdf = new MYPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
     $pdf->SetTitle('Conjunto de pruebas');
     $pdf->SetProtection(['modify']);
     $pdf->setPrintHeader(true);
@@ -925,7 +909,7 @@ public static function generar_zip_informes_grupo($courseid, $groupid) {
 
     // 3) Generar un PDF por usuario
     foreach ($members as $m) {
-        $pdf = new \MYPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+        $pdf = new MYPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
         $pdf->SetTitle('Informe ATU');
         $pdf->setPrintHeader(true);
         $pdf->setPrintFooter(true);
