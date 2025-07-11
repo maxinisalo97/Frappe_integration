@@ -866,11 +866,11 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     try {
         $curl = new \curl();
         $admin = get_admin();
-        \core_session\manager::set_user($admin);
+        \core\session\manager::set_user($admin);
 
         $pdf_binario = $curl->get($url_string);
         
-        \core_session\manager::set_user($GLOBALS['USER']);
+        \core\session\manager::set_user($GLOBALS['USER']);
 
         if ($curl->errno) {
             return ['status' => 'error', 'data' => null, 'message' => 'Error de cURL: ' . $curl->error];
