@@ -1,22 +1,64 @@
 <?php
 namespace local_frappe_integration;
 defined('MOODLE_INTERNAL') || die();
-
-require_once($CFG->libdir . '/externallib.php');
-require_once($CFG->libdir . '/gradelib.php');
-require_once(__DIR__ . '/../locallib.php');
-require_once($CFG->dirroot . '/course/lib.php');
-$blockdir = \core_component::get_plugin_directory('block', 'dedication_atu');
-require_once($blockdir . '/models/course.php');
-require_once($blockdir . '/dedication_atu_lib.php'); // aquí se define el manager y la constante por defecto
-require_once($blockdir . '/lib.php');             // aquí está la clase libDedication_atu
-
 global $CFG;
 
 use external_api;
 use external_function_parameters;
 use external_value;
 use external_single_structure;
+
+// -----------------------------------------------------------------------------
+// INCLUDES
+// -----------------------------------------------------------------------------
+require_once($CFG->libdir . '/externallib.php');
+require_once($CFG->libdir . '/gradelib.php');
+require_once(__DIR__ . '/../locallib.php');
+require_once($CFG->dirroot . '/course/lib.php');
+
+// Necesario para TCPDF
+require_once($CFG->dirroot . '/lib/tcpdf/tcpdf.php');
+
+// Dedication Atu block
+$blockdir = \core_component::get_plugin_directory('block', 'dedication_atu');
+require_once($blockdir . '/models/course.php');
+require_once($blockdir . '/dedication_atu_lib.php');
+require_once($blockdir . '/lib.php');
+
+// -----------------------------------------------------------------------------
+// CLASES TCPDF
+// -----------------------------------------------------------------------------
+/**
+ * Para los informes de un único usuario (con salto de página).
+ */
+class MYPDF2 extends \TCPDF {
+    public function Header() {}
+    public function Footer() {
+        $this->SetY(-15);
+        $this->SetFont('helvetica','I',8);
+        $this->Cell(
+            0, 10,
+            'Página '.$this->getAliasNumPage().'/'.$this->getAliasNbPages(),
+            0, false, 'C', 0, '', 0, false, 'T', 'M'
+        );
+    }
+}
+
+/**
+ * Para el ZIP de varios informes de grupo.
+ */
+class MYPDF extends \TCPDF {
+    public function Header() {}
+    public function Footer() {
+        $this->SetY(-15);
+        $this->SetFont('helvetica','I',8);
+        $this->Cell(
+            0, 10,
+            'Página '.$this->getAliasNumPage().'/'.$this->getAliasNbPages(),
+            0, false, 'C', 0, '', 0, false, 'T', 'M'
+        );
+    }
+}
 
 class external extends external_api {
     /**
@@ -58,6 +100,7 @@ class external extends external_api {
             'generar_excel_seguimiento'      => 'generar_excel_seguimiento',
             'obtener_notas_curso'            => 'obtener_notas_curso',
             'generar_pdf_conjunto_usuario'   => 'generar_pdf_conjunto_usuario',
+            'generar_zip_informes_grupo' => 'generar_zip_informes_grupo',
         ];
 
         if (!isset($allowed[$params['method']])) {
@@ -786,64 +829,55 @@ public static function obtener_notas_curso($courseid) {
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
     global $DB, $CFG;
 
-    // 1) Validar parámetros.
+    // 1) Validar
     $params = self::validate_parameters(
         new external_function_parameters([
             'courseid' => new external_value(PARAM_INT,      'ID de curso'),
-            'username' => new external_value(PARAM_USERNAME, 'Username en Moodle'),
+            'username' => new external_value(PARAM_USERNAME, 'Username'),
         ]),
         compact('courseid','username')
     );
 
-    // 2) Buscar usuario.
+    // 2) Usuario
     $user = $DB->get_record('user',
-        ['username' => $params['username']],
-        'id, firstname, lastname',
-        IGNORE_MISSING
-    );
+        ['username'=>$params['username']], 'id, firstname, lastname', IGNORE_MISSING);
     if (!$user) {
         return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
     }
 
-    // 3) Recoger todos los attemptid “prueba” de ese usuario en el curso.
+    // 3) Obtengo todos los attempt de “prueba”
     $rs = $DB->get_records_sql("
         SELECT qa.id AS attemptid, qa.quiz
           FROM {quiz_attempts} qa
-          JOIN {grade_items}   gi ON gi.iteminstance = qa.quiz
+          JOIN {grade_items} gi ON gi.iteminstance = qa.quiz
          WHERE gi.courseid   = :c
            AND gi.itemname LIKE :k
            AND qa.userid     = :u
-      ORDER BY qa.attempt
+         ORDER BY qa.attempt
     ", [
-        'c' => $params['courseid'],
-        'k' => '%prueba%',
-        'u' => $user->id
+        'c'=> $params['courseid'],
+        'k'=> '%prueba%',
+        'u'=> $user->id
     ]);
     if (empty($rs)) {
         return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario'];
     }
 
-    // 4) Montar el HTML combinado.
-    require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
-    // Aquí puedes añadir un título o CSS adicional si quieres.
-    $html = "<h2>Conjunto de pruebas: "
-          . fullname($user) . "</h2>";
+    // 4) Construyo HTML combinado
+    require_once($CFG->dirroot.'/blocks/dedication_atu/lib.php');
+    $html = "<h2>Conjunto de pruebas: ".fullname($user)."</h2>";
     foreach ($rs as $r) {
-        // recuperar cmid
-        $cm = get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
+        $cm = \get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
         $html .= \libDedication_atu::devuelve_informe_respuestas_html(
             $r->attemptid, $cm->id, $params['courseid']
         );
-        // salto de página
         $html .= '<div style="page-break-after: always;"></div>';
     }
 
-    // 5) Generar el PDF “en memoria” y devolverlo como string.
-    //    Inspirado en la librería de dedication_atu: MYPDF2 extiende TCPDF.
+    // 5) Generar PDF “en memoria”
     $pdf = new \MYPDF2(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
-    // ajustar header/footer como en libDedication_atu::genera_pdf_prueba()
     $pdf->SetTitle('Conjunto de pruebas');
-    $pdf->SetProtection(array('modify'));
+    $pdf->SetProtection(['modify']);
     $pdf->setPrintHeader(true);
     $pdf->setPrintFooter(true);
     $pdf->SetHeaderData(PDF_HEADER_LOGO, PDF_HEADER_LOGO_WIDTH, PDF_HEADER_TITLE, PDF_HEADER_STRING);
@@ -853,24 +887,83 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     $pdf->SetMargins(PDF_MARGIN_LEFT, PDF_MARGIN_TOP, PDF_MARGIN_RIGHT);
     $pdf->SetHeaderMargin(PDF_MARGIN_HEADER);
     $pdf->SetFooterMargin(PDF_MARGIN_FOOTER);
-    $pdf->SetAutoPageBreak(TRUE, PDF_MARGIN_BOTTOM);
+    $pdf->SetAutoPageBreak(true, PDF_MARGIN_BOTTOM);
     $pdf->setImageScale(PDF_IMAGE_SCALE_RATIO);
-
     $pdf->AddPage();
     $pdf->SetFont('helvetica','',10);
     $pdf->writeHTML($html, true, false, true, false, '');
     $pdf->lastPage();
 
-    // *** Aquí: Output en variable con el parámetro 'S' ***
+    // 6) Output en string (flag 'S')
     $rawpdf = $pdf->Output('', 'S');
 
-    // 6) Y lo devolvemos en Base64 para tu API REST.
     return [
-        'status'  => 'success',
-        'data'    => base64_encode($rawpdf),
-        'message' => 'PDF generado correctamente.'
+        'status' => 'success',
+        'data'   => base64_encode($rawpdf),
+        'message'=> 'PDF generado correctamente'
     ];
 }
 
+public static function generar_zip_informes_grupo($courseid, $groupid) {
+    global $DB, $CFG;
 
+    // 1) Miembros del grupo
+    $members = $DB->get_records_sql("
+        SELECT u.id, u.firstname, u.lastname
+          FROM {groups_members} gm
+          JOIN {user} u ON u.id = gm.userid
+         WHERE gm.groupid = :g
+    ", ['g'=>$groupid]);
+    if (empty($members)) {
+        return ['status'=>'error','data'=>null,'message'=>'No hay alumnos en el grupo'];
+    }
+
+    // 2) Preparo ZIP
+    $zipFile = \tempnam(\sys_get_temp_dir(), 'atu_zip');
+    $zip     = new \ZipArchive();
+    $zip->open($zipFile, \ZipArchive::CREATE);
+
+    // 3) Generar un PDF por usuario
+    foreach ($members as $m) {
+        $pdf = new \MYPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+        $pdf->SetTitle('Informe ATU');
+        $pdf->setPrintHeader(true);
+        $pdf->setPrintFooter(true);
+        $pdf->SetHeaderData(PDF_HEADER_LOGO, PDF_HEADER_LOGO_WIDTH, PDF_HEADER_TITLE, PDF_HEADER_STRING);
+        $pdf->setHeaderFont([PDF_FONT_NAME_MAIN,'',PDF_FONT_SIZE_MAIN]);
+        $pdf->setFooterFont([PDF_FONT_NAME_DATA,'',PDF_FONT_SIZE_DATA]);
+        $pdf->SetFont('helvetica','',10);
+        $pdf->SetMargins(PDF_MARGIN_LEFT,PDF_MARGIN_TOP,PDF_MARGIN_RIGHT);
+        $pdf->SetHeaderMargin(PDF_MARGIN_HEADER);
+        $pdf->SetFooterMargin(PDF_MARGIN_FOOTER);
+        $pdf->SetAutoPageBreak(true,PDF_MARGIN_BOTTOM);
+        $pdf->setImageScale(PDF_IMAGE_SCALE_RATIO);
+        $pdf->AddPage();
+
+        // Esto es tu función global de customreport:
+        $html = \genera_informe_html($courseid, $m->id, true, $groupid);
+        $pdf->writeHTML($html, true, false, true, false, '');
+        $pdf->lastPage();
+
+        // Guardo en fichero temporal
+        $tmpPdf = \tempnam(\sys_get_temp_dir(), 'atu_pdf');
+        $pdf->Output($tmpPdf, 'F');
+
+        // Lo añado al ZIP
+        $zip->addFile($tmpPdf, "Informe_{$m->lastname}_{$m->firstname}.pdf");
+        @\unlink($tmpPdf);
+    }
+
+    $zip->close();
+
+    // 4) Devuelvo ZIP en Base64
+    $zipData = \file_get_contents($zipFile);
+    @\unlink($zipFile);
+
+    return [
+        'status' => 'success',
+        'data'   => base64_encode($zipData),
+        'message'=> ''
+    ];
+}
 }
