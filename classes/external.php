@@ -833,9 +833,9 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     }
 
     // PASO 2: Simular el contexto completo de una página de Moodle para cargar todos los estilos y configuraciones
-    $PAGE->set_context(context_course::instance($course->id));
+    $PAGE->set_context(\context_course::instance($course->id));
     $PAGE->set_course($course);
-    $PAGE->set_url(new moodle_url('/local/frappe_integration/fakepage.php')); // URL simulada, necesaria para la inicialización
+    $PAGE->set_url(new \moodle_url('/local/frappe_integration/fakepage.php')); // URL simulada, necesaria para la inicialización
     $PAGE->set_title($course->fullname);
     $PAGE->set_heading($course->fullname);
     $PAGE->set_pagelayout('report'); // Usamos un layout de informe estándar
