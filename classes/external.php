@@ -813,119 +813,163 @@ public static function obtener_notas_curso($courseid) {
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
     global $DB, $CFG;
 
-    // 1) Validar
+    // 1) Validar parámetros de entrada
     $params = self::validate_parameters(
         new external_function_parameters([
-            'courseid' => new external_value(PARAM_INT,      'ID de curso'),
+            'courseid' => new external_value(PARAM_INT, 'ID de curso'),
             'username' => new external_value(PARAM_USERNAME, 'Username'),
         ]),
-        compact('courseid','username')
+        compact('courseid', 'username')
     );
 
-    // 2) Usuario
-    $user = $DB->get_record('user',
-        ['username'=>$params['username']], 'id, firstname, lastname', IGNORE_MISSING);
+    // 2) Obtener el usuario
+    $user = $DB->get_record('user', ['username' => $params['username']], 'id, firstname, lastname', IGNORE_MISSING);
     if (!$user) {
-        return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
+        return ['status' => 'error', 'data' => null, 'message' => 'Usuario no existe'];
     }
 
-    // 3) Obtengo todos los attempt de “prueba”
-    $rs = $DB->get_records_sql("
+    // 3) Obtener todos los intentos de cuestionario que coincidan con la palabra "prueba"
+    $quiz_attempts = $DB->get_records_sql("
         SELECT qa.id AS attemptid, qa.quiz
           FROM {quiz_attempts} qa
           JOIN {grade_items} gi ON gi.iteminstance = qa.quiz
-         WHERE gi.courseid   = :c
-           AND gi.itemname LIKE :k
-           AND qa.userid     = :u
+         WHERE gi.courseid = :courseid
+           AND gi.itemname LIKE :keyword
+           AND qa.userid = :userid
          ORDER BY qa.attempt
     ", [
-        'c'=> $params['courseid'],
-        'k'=> '%prueba%',
-        'u'=> $user->id
+        'courseid' => $params['courseid'],
+        'keyword'  => '%prueba%',
+        'userid'   => $user->id
     ]);
-    if (empty($rs)) {
-        return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario'];
+
+    if (empty($quiz_attempts)) {
+        return ['status' => 'error', 'data' => null, 'message' => 'No se encontraron pruebas para este usuario.'];
     }
- // 4) Construir HTML combinado con CSS inline (sin HEREDOC)
-    require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
 
-    // Definimos el CSS como una cadena concatenada
-    $css  = '<style>';
-    $css .= 'body { font-family: dejavusans, helvetica; font-size: 10pt; }';
-    $css .= '.header-table { width: 100%; margin-bottom: 8pt; }';
-    $css .= '.header-table td { vertical-align: top; padding: 2pt; }';
-    $css .= '.header-table .title { font-size: 12pt; font-weight: bold; }';
-    $css .= '.header-table .label { font-weight: bold; width: 25%; }';
-    $css .= '.timestamps { font-size: 8pt; color: #555; margin-bottom: 6pt; }';
-    $css .= '.page-break { page-break-after: always; }';
-    $css .= '</style>';
+    // 4) Incluir la librería necesaria para obtener el HTML
+    $libdir = \core_component::get_plugin_directory('block', 'dedication_atu');
+    require_once($libdir . '/lib.php');
 
-    $html = $css;
-    foreach ($rs as $r) {
-        // Datos de intento, quiz y curso
-        $attempt = $DB->get_record('quiz_attempts', ['id' => $r->attemptid], '*', MUST_EXIST);
-        $quiz    = $DB->get_record('quiz',          ['id' => $r->quiz],      '*', MUST_EXIST);
-        $course  = $DB->get_record('course',        ['id' => $params['courseid']], 'fullname', MUST_EXIST);
+    // 5) Construir el contenido HTML completo, comenzando con los estilos CSS
+    
+    // --- INYECCIÓN DE ESTILOS CSS ---
+    // Este bloque de CSS es crucial para que el informe se renderice correctamente en el PDF.
+    // Está basado en el que se usa en el bloque original 'dedication_atu'.
+    $css_necesario = '
+    <style>
+        body { 
+            font-family: dejavusans, helvetica, sans-serif; /* dejavusans es buena para PDF por los caracteres especiales */
+            font-size: 10px; 
+            line-height: 1.5;
+        }
+        table.quizreviewsummary {
+            margin-bottom: 15px;
+            border-collapse: collapse;
+            width: 100%;
+        }
+        table.quizreviewsummary tbody th {
+            color: #3e65a0;
+            font-weight: bold;
+            text-align: right;
+            padding: 5px;
+            border: 1px solid #ddd;
+            background-color: #f1f1f1;
+            width: 20%;
+        }
+        table.quizreviewsummary tbody td {
+            padding: 5px;
+            border: 1px solid #ddd;
+            background-color: #f9f9f9;
+        }
+        div.que {
+            display: block; /* Flexbox no funciona bien en TCPDF, usamos block */
+            margin-top: 20px;
+            border: 1px solid #ccc;
+            padding: 10px;
+        }
+        div.info {
+            background-color: #e9ecef;
+            border: 1px solid #ced4da;
+            padding: 8px;
+            margin-bottom: 10px;
+        }
+        div.content {
+            margin-top: 10px;
+        }
+        div.formulation {
+            color: #2f6473;
+            background-color: #def2f8;
+            border: 1px solid #d1edf6;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        div.outcome {
+            color: #7d5a29;
+            background-color: #fcefdc;
+            border: 1px solid #fbe8cd;
+            padding: 10px;
+        }
+        .page-break {
+             page-break-after: always;
+        }
+    </style>';
 
-        // Cabecera por intento
-        $html .= '<table class="header-table">';
-        $html .=   '<tr><td class="title" colspan="2">Dedicación al curso</td></tr>';
-        $html .=   '<tr>';
-        $html .=     '<td><span class="label">ALUMNO:</span> ' . fullname($user) . '</td>';
-        $html .=     '<td><span class="label">USUARIO/DNI:</span> ' . $user->username . '</td>';
-        $html .=   '</tr>';
-        $html .=   '<tr>';
-        $html .=     '<td><span class="label">CURSO:</span> ' . format_string($course->fullname) . '</td>';
-        $html .=     '<td><span class="label">PRUEBA:</span> ' . format_string($quiz->name) . '</td>';
-        $html .=   '</tr>';
-        $html .= '</table>';
-
-        // Fechas y calificación
-        $html .= '<div class="timestamps">';
-        $html .=   'Comenzado el ' . userdate($attempt->timestart, '%A, %e de %B de %Y, %H:%M') . '<br>';
-        $html .=   'Finalizado el ' . userdate($attempt->timefinish, '%A, %e de %B de %Y, %H:%M') . '<br>';
-        $html .=   'Tiempo empleado: ' . format_time($attempt->timefinish - $attempt->timestart) . '<br>';
-        $html .=   'Calificación: ' . number_format($attempt->sumgrades, 2)
-                         . ' de ' . number_format($quiz->sumgrades, 2)
-                         . ' (' . intval($attempt->grade * 100 / $quiz->sumgrades) . '%)';
-        $html .= '</div>';
-
-        // Detalle de preguntas
-        $cm = get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
-        $html .= \libDedication_atu::devuelve_informe_respuestas_html(
-            $r->attemptid, $cm->id, $params['courseid']
+    // Empezamos el HTML con los estilos y un título general para el conjunto de informes
+    $html_completo = $css_necesario . "<h1>Conjunto de Pruebas de Evaluación</h1><h2>".fullname($user)."</h2>";
+    
+    foreach ($quiz_attempts as $attempt) {
+        $cm = get_coursemodule_from_instance('quiz', $attempt->quiz, $params['courseid'], false, MUST_EXIST);
+        
+        // REUTILIZAMOS la función que genera el HTML para un intento
+        $html_completo .= \libDedication_atu::devuelve_informe_respuestas_html(
+            $attempt->attemptid, 
+            $cm->id, 
+            $params['courseid']
         );
-
-        // Salto de página
-        $html .= '<div class="page-break"></div>';
+        
+        // Añadimos un salto de página después de cada informe
+        $html_completo .= '<div class="page-break"></div>';
     }
 
-    // 5) Generar PDF en memoria
+    // Quitamos el último salto de página para evitar una hoja en blanco al final
+    $html_completo = rtrim($html_completo, '<div class="page-break"></div>');
+
+    // 6) REPLICAMOS la generación del PDF con control total
     $pdf = new MYPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
-    $pdf->SetTitle('Conjunto de pruebas');
-    $pdf->SetProtection(['modify']);
-    $pdf->setPrintHeader(true);
-    $pdf->setPrintFooter(true);
-    $pdf->SetHeaderData(PDF_HEADER_LOGO, PDF_HEADER_LOGO_WIDTH, PDF_HEADER_TITLE, PDF_HEADER_STRING);
+    
+    // Configuración del documento y metadatos
+    $pdf->SetCreator(PDF_CREATOR);
+    $pdf->SetAuthor('Plataforma ATU');
+    $pdf->SetTitle('Conjunto de Pruebas: ' . fullname($user));
+    
+    // Cabecera y pie de página
+    $pdf->setPrintHeader(true); // Usamos la cabecera por defecto de TCPDF (configurada con SetHeaderData)
+    $pdf->setPrintFooter(true); // Usamos nuestro pie de página personalizado de la clase MYPDF
+    $pdf->SetHeaderData(PDF_HEADER_LOGO, PDF_HEADER_LOGO_WIDTH, 'Informe de Pruebas de Evaluación', "Usuario: " . $user->username);
     $pdf->setHeaderFont([PDF_FONT_NAME_MAIN, '', PDF_FONT_SIZE_MAIN]);
     $pdf->setFooterFont([PDF_FONT_NAME_DATA, '', PDF_FONT_SIZE_DATA]);
-    $pdf->SetDefaultMonospacedFont(PDF_FONT_MONOSPACED);
+
+    // Márgenes y saltos de página automáticos
     $pdf->SetMargins(PDF_MARGIN_LEFT, PDF_MARGIN_TOP, PDF_MARGIN_RIGHT);
     $pdf->SetHeaderMargin(PDF_MARGIN_HEADER);
     $pdf->SetFooterMargin(PDF_MARGIN_FOOTER);
     $pdf->SetAutoPageBreak(true, PDF_MARGIN_BOTTOM);
-    $pdf->setImageScale(PDF_IMAGE_SCALE_RATIO);
+    
+    // Añadimos la primera página
     $pdf->AddPage();
-    $pdf->SetFont('helvetica','',10);
-    $pdf->writeHTML($html, true, false, true, false, '');
-    $pdf->lastPage();
+    $pdf->SetFont('helvetica', '', 9); // Ajustamos el tamaño de fuente si es necesario
 
-    // 6) Devolver PDF codificado
-    $rawpdf = $pdf->Output('', 'S');
+    // Escribimos el contenido HTML (con estilos) en el PDF
+    $pdf->writeHTML($html_completo, true, false, true, false, '');
+
+    // 7) Generar el PDF en memoria y devolverlo codificado en Base64
+    $rawpdf = $pdf->Output('', 'S'); // El flag 'S' devuelve el PDF como una cadena
+    
     return [
         'status'  => 'success',
         'data'    => base64_encode($rawpdf),
-        'message' => 'PDF generado correctamente'
+        'message' => 'PDF de conjunto de pruebas generado correctamente.'
     ];
 }
 public static function generar_pdf_informe_usuario($username, $courseid) {
