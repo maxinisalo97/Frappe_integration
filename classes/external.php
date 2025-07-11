@@ -913,18 +913,39 @@ public static function generar_pdf_informe_usuario($username, $courseid) {
     $reportdir = \core_component::get_plugin_directory('report', 'customreport');
     require_once($reportdir . '/lib.php');
 
-    // 4) Generar el HTML completo
+    // 4) Generar el HTML completo (con la cabecera original, como querías)
     $html = genera_informe_html($params['courseid'], $user->id, true, null);
+    // La ruta relativa que usa el HTML original
+    $ruta_relativa_a_buscar = 'src="images/logo.png"';
+    
+    // La ruta física REAL donde se encuentra el logo en el sistema de archivos
+    $ruta_fisica_real_logo = $CFG->dirroot . '/report/customreport/images/logo.png';
 
-    // 5) Montar el PDF “en memoria”
-    $pdf = new \MYPDF2(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+    // Verificamos que el logo existe para no causar errores
+    if (file_exists($ruta_fisica_real_logo)) {
+        // Leemos el contenido binario de la imagen
+        $logo_data = file_get_contents($ruta_fisica_real_logo);
+        // Obtenemos el tipo de imagen (png, jpg, etc.)
+        $tipo_imagen = pathinfo($ruta_fisica_real_logo, PATHINFO_EXTENSION);
+        // Creamos la cadena completa para la imagen incrustada en Base64
+        $logo_incrustado_base64 = 'src="data:image/' . $tipo_imagen . ';base64,' . base64_encode($logo_data) . '"';
+        
+        // Reemplazamos la ruta rota por la imagen incrustada en el HTML
+        $html = str_replace($ruta_relativa_a_buscar, $logo_incrustado_base64, $html);
+    }
+    // Si el logo no existe, no hacemos nada y el HTML se queda como está (con la ruta rota).
+    // =========================================================================
+    // FIN DE LA CORRECCIÓN
+    // =========================================================================
+
+    // 5) Montar el PDF “en memoria” con el HTML ya corregido
+    // Usamos tu clase MYPDF, sin necesidad de crear una nueva.
+    $pdf = new MYPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
     $pdf->SetTitle("Informe {$user->firstname} {$user->lastname}");
-    $pdf->setPrintHeader(true);
-    $pdf->setPrintFooter(true);
-    $pdf->SetHeaderData(PDF_HEADER_LOGO, PDF_HEADER_LOGO_WIDTH, PDF_HEADER_TITLE, PDF_HEADER_STRING);
-    $pdf->setHeaderFont([PDF_FONT_NAME_MAIN,'',PDF_FONT_SIZE_MAIN]);
-    $pdf->setFooterFont([PDF_FONT_NAME_DATA,'',PDF_FONT_SIZE_DATA]);
-    $pdf->SetDefaultMonospacedFont(PDF_FONT_MONOSPACED);
+    
+    $pdf->setPrintHeader(false); // Ponemos a false para evitar cualquier cabecera por defecto de TCPDF
+    $pdf->setPrintFooter(true);  // Mantenemos el pie de página
+
     $pdf->SetMargins(PDF_MARGIN_LEFT, PDF_MARGIN_TOP, PDF_MARGIN_RIGHT);
     $pdf->SetHeaderMargin(PDF_MARGIN_HEADER);
     $pdf->SetFooterMargin(PDF_MARGIN_FOOTER);
