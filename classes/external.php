@@ -892,7 +892,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
 
         // Detalle de preguntas
         $cm = get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
-        $html .= libDedication_atu::devuelve_informe_respuestas_html(
+        $html .= \libDedication_atu::devuelve_informe_respuestas_html(
             $r->attemptid, $cm->id, $params['courseid']
         );
 
