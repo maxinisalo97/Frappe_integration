@@ -858,36 +858,41 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     $_GET['modo_pdf']   = 'true';
     $_GET['userid']     = $user->id;
     $_GET['attemptid']  = array_keys($quiz_attempts_records);
+    $current_dir = getcwd(); // Guardamos el directorio actual
+    $block_dir = $CFG->dirroot . '/blocks/dedication_atu/'; // Directorio al que queremos cambiar
 
     ob_start();
     try {
-        // Ejecutamos el script modificado. Para que tenga acceso a todas las variables
-        // de Moodle, lo hacemos dentro del contexto de esta función.
-        
-        // Nos aseguramos de que el script se ejecute como administrador para tener todos los permisos
-        $currentuser = clone($GLOBALS['USER']);
-        \core\session\manager::set_user(get_admin());
+        if (chdir($block_dir)) { // Cambiamos al directorio del bloque
+            $currentuser = clone($GLOBALS['USER']);
+            \core\session\manager::set_user(get_admin());
 
-        include($tmp_script_path);
+            // Ahora el include se ejecuta desde la perspectiva de la carpeta del bloque,
+            // y todas las rutas relativas como 'models/course.php' funcionarán.
+            include($tmp_script_path);
 
-        // Restauramos el usuario original
-        \core\session\manager::set_user($currentuser);
-
+            \core\session\manager::set_user($currentuser);
+            
+            chdir($current_dir); // ¡MUY IMPORTANTE! Volvemos al directorio original.
+        } else {
+            throw new \Exception("No se pudo cambiar al directorio del bloque: " . $block_dir);
+        }
     } catch (Exception $e) {
         ob_end_clean();
-        unlink($tmp_script_path); // No olvides borrar el archivo temporal
+        chdir($current_dir); // Nos aseguramos de volver al directorio original en caso de error
+        unlink($tmp_script_path);
         return ['status' => 'error', 'data' => null, 'message' => 'Excepción al ejecutar el script del informe: ' . $e->getMessage()];
     }
 
     $pdf_binario = ob_get_contents();
     ob_end_clean();
-    unlink($tmp_script_path); // Borramos el archivo temporal
+    unlink($tmp_script_path);
 
     if (strpos($pdf_binario, '%PDF-') === false) {
         return ['status' => 'error', 'data' => null, 'message' => 'El script no generó un PDF. Salida: ' . htmlspecialchars(substr($pdf_binario, 0, 1000))];
     }
 
-    // --- 4. DEVOLVER EL PDF CAPTURADO ---
+    // 5. DEVOLVER EL PDF CAPTURADO
     return [
         'status'  => 'success',
         'data'    => base64_encode($pdf_binario),
