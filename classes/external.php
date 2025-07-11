@@ -846,19 +846,61 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     if (empty($rs)) {
         return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario'];
     }
+ // 4) Construir HTML combinado con CSS inline (sin HEREDOC)
+    require_once($CFG->dirroot . '/blocks/dedication_atu/lib.php');
 
-    // 4) Construyo HTML combinado
-    require_once($CFG->dirroot.'/blocks/dedication_atu/lib.php');
-    $html = "<h2>Conjunto de pruebas: ".fullname($user)."</h2>";
+    // Definimos el CSS como una cadena concatenada
+    $css  = '<style>';
+    $css .= 'body { font-family: dejavusans, helvetica; font-size: 10pt; }';
+    $css .= '.header-table { width: 100%; margin-bottom: 8pt; }';
+    $css .= '.header-table td { vertical-align: top; padding: 2pt; }';
+    $css .= '.header-table .title { font-size: 12pt; font-weight: bold; }';
+    $css .= '.header-table .label { font-weight: bold; width: 25%; }';
+    $css .= '.timestamps { font-size: 8pt; color: #555; margin-bottom: 6pt; }';
+    $css .= '.page-break { page-break-after: always; }';
+    $css .= '</style>';
+
+    $html = $css;
     foreach ($rs as $r) {
-        $cm = \get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
-        $html .= \libDedication_atu::devuelve_informe_respuestas_html(
+        // Datos de intento, quiz y curso
+        $attempt = $DB->get_record('quiz_attempts', ['id' => $r->attemptid], '*', MUST_EXIST);
+        $quiz    = $DB->get_record('quiz',          ['id' => $r->quiz],      '*', MUST_EXIST);
+        $course  = $DB->get_record('course',        ['id' => $params['courseid']], 'fullname', MUST_EXIST);
+
+        // Cabecera por intento
+        $html .= '<table class="header-table">';
+        $html .=   '<tr><td class="title" colspan="2">Dedicación al curso</td></tr>';
+        $html .=   '<tr>';
+        $html .=     '<td><span class="label">ALUMNO:</span> ' . fullname($user) . '</td>';
+        $html .=     '<td><span class="label">USUARIO/DNI:</span> ' . $user->username . '</td>';
+        $html .=   '</tr>';
+        $html .=   '<tr>';
+        $html .=     '<td><span class="label">CURSO:</span> ' . format_string($course->fullname) . '</td>';
+        $html .=     '<td><span class="label">PRUEBA:</span> ' . format_string($quiz->name) . '</td>';
+        $html .=   '</tr>';
+        $html .= '</table>';
+
+        // Fechas y calificación
+        $html .= '<div class="timestamps">';
+        $html .=   'Comenzado el ' . userdate($attempt->timestart, '%A, %e de %B de %Y, %H:%M') . '<br>';
+        $html .=   'Finalizado el ' . userdate($attempt->timefinish, '%A, %e de %B de %Y, %H:%M') . '<br>';
+        $html .=   'Tiempo empleado: ' . format_time($attempt->timefinish - $attempt->timestart) . '<br>';
+        $html .=   'Calificación: ' . number_format($attempt->sumgrades, 2)
+                         . ' de ' . number_format($quiz->sumgrades, 2)
+                         . ' (' . intval($attempt->grade * 100 / $quiz->sumgrades) . '%)';
+        $html .= '</div>';
+
+        // Detalle de preguntas
+        $cm = get_coursemodule_from_instance('quiz', $r->quiz, $params['courseid'], false, MUST_EXIST);
+        $html .= libDedication_atu::devuelve_informe_respuestas_html(
             $r->attemptid, $cm->id, $params['courseid']
         );
-        $html .= '<div style="page-break-after: always;"></div>';
+
+        // Salto de página
+        $html .= '<div class="page-break"></div>';
     }
 
-    // 5) Generar PDF “en memoria”
+    // 5) Generar PDF en memoria
     $pdf = new MYPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
     $pdf->SetTitle('Conjunto de pruebas');
     $pdf->SetProtection(['modify']);
@@ -878,13 +920,12 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     $pdf->writeHTML($html, true, false, true, false, '');
     $pdf->lastPage();
 
-    // 6) Output en string (flag 'S')
+    // 6) Devolver PDF codificado
     $rawpdf = $pdf->Output('', 'S');
-
     return [
-        'status' => 'success',
-        'data'   => base64_encode($rawpdf),
-        'message'=> 'PDF generado correctamente'
+        'status'  => 'success',
+        'data'    => base64_encode($rawpdf),
+        'message' => 'PDF generado correctamente'
     ];
 }
 public static function generar_pdf_informe_usuario($username, $courseid) {
