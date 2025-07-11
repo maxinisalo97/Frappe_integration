@@ -811,98 +811,114 @@ public static function obtener_notas_curso($courseid) {
     ];
 }
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
-    global $DB, $CFG, $PAGE, $OUTPUT, $USER; // Aseguramos que las globales de Moodle estén disponibles
+    global $DB, $CFG, $PAGE, $OUTPUT, $USER, $COURSE; // Aseguramos acceso a todas las globales de Moodle
 
-    // 1) Validar parámetros
+    // PASO 1: Validar los parámetros de entrada y obtener datos básicos
     $params = self::validate_parameters(
         new external_function_parameters([
             'courseid' => new external_value(PARAM_INT, 'ID de curso'),
             'username' => new external_value(PARAM_USERNAME, 'Username'),
         ]),
-        ['courseid' => $courseid, 'username' => $username] // Este array es el que faltaba
+        ['courseid' => $courseid, 'username' => $username]
     );
+
     $user = $DB->get_record('user', ['username' => $params['username']], 'id, firstname, lastname', IGNORE_MISSING);
     if (!$user) {
-        return ['status' => 'error', 'data' => null, 'message' => 'Usuario no existe'];
+        return ['status' => 'error', 'data' => null, 'message' => 'El usuario especificado no existe.'];
     }
 
-    $quiz_attempts_records = $DB->get_records_sql("
+    $course = $DB->get_record('course', ['id' => $params['courseid']], '*', MUST_EXIST);
+    if (!$course) {
+        return ['status' => 'error', 'data' => null, 'message' => 'El curso especificado no existe.'];
+    }
+
+    // PASO 2: Simular el contexto completo de una página de Moodle para cargar todos los estilos y configuraciones
+    $PAGE->set_context(context_course::instance($course->id));
+    $PAGE->set_course($course);
+    $PAGE->set_url(new moodle_url('/local/frappe_integration/fakepage.php')); // URL simulada, necesaria para la inicialización
+    $PAGE->set_title($course->fullname);
+    $PAGE->set_heading($course->fullname);
+    $PAGE->set_pagelayout('report'); // Usamos un layout de informe estándar
+
+    // Forzamos la carga del motor de renderizado de Moodle (tema, CSS, etc.)
+    // La salida de esta llamada se capturará y descartará, pero su ejecución es VITAL.
+    ob_start();
+    echo $OUTPUT->header();
+    ob_end_clean();
+
+    // PASO 3: Obtener los datos necesarios para el informe
+    $quiz_attempts = $DB->get_records_sql("
         SELECT qa.id AS attemptid, qa.quiz
           FROM {quiz_attempts} qa
           JOIN {grade_items} gi ON gi.iteminstance = qa.quiz
-         WHERE gi.courseid = :courseid AND gi.itemname LIKE :keyword AND qa.userid = :userid
+         WHERE gi.courseid = :courseid
+           AND gi.itemname LIKE :keyword
+           AND qa.userid = :userid
          ORDER BY qa.attempt
     ", [
         'courseid' => $params['courseid'],
         'keyword'  => '%prueba%',
         'userid'   => $user->id
     ]);
-    if (empty($quiz_attempts_records)) {
-        return ['status' => 'error', 'data' => null, 'message' => 'No hay pruebas para este usuario.'];
+
+    if (empty($quiz_attempts)) {
+        return ['status' => 'error', 'data' => null, 'message' => 'No se encontraron pruebas para este usuario en este curso.'];
     }
-    // Extraemos solo los IDs a un array simple
-    $attemptids = array_keys($quiz_attempts_records);
 
-    // 3) --- ¡AQUÍ VIENE EL TRUCO! Simular los parámetros GET/POST ---
-    // El script 'dedication_atu.php' lee estas variables directamente.
-    
-    // Parámetros básicos que el script espera
-    $_GET['courseid']   = $params['courseid'];
-    $_REQUEST['courseid'] = $params['courseid'];
-    
-    // Necesitamos el 'instanceid' del bloque. Lo buscamos.
-    $block_instance = $DB->get_record('block_instances', ['blockname' => 'dedication_atu', 'parentcontextid' => \context_course::instance($params['courseid'])->id], 'id', IGNORE_MISSING);
-    if (!$block_instance) {
-        return ['status' => 'error', 'data' => null, 'message' => 'No se encuentra la instancia del bloque dedication_atu en este curso.'];
+    // PASO 4: Construir el HTML del informe y el título del archivo
+    $libdir = \core_component::get_plugin_directory('block', 'dedication_atu');
+    require_once($libdir . '/lib.php');
+    require_once($libdir . '/dedication_atu_lib.php');
+
+    $css_adicional = '<style>
+        * { box-sizing: border-box; font-family: verdana, sans-serif; font-size: 10px; }
+        table.quizreviewsummary tbody th { color: #3e65a0; font-weight: bold; text-align: right; padding-right: 10px; }
+        table.quizreviewsummary tbody th, table.quizreviewsummary tbody td { background-color: #f1f1f1; padding: 4px; border: 1px solid #ddd; }
+        div.que { display: block; margin-top: 1.5rem; border: 1px solid #ccc; padding: 10px; page-break-inside: avoid; }
+        div.info { background-color: #e9ecef; border: 1px solid #ced4da; padding: 8px; margin-bottom: 10px; }
+        div.content { margin-top: 10px; }
+        div.formulation { color: #2f6473; background-color: #def2f8; border: 1px solid #d1edf6; padding: 1rem; margin-bottom: 1rem; }
+        div.outcome { color: #7d5a29; background-color: #fcefdc; border: 1px solid #fbe8cd; padding: 1rem; }
+    </style>';
+
+    $html_conjunto = $css_adicional;
+    foreach ($quiz_attempts as $attempt) {
+        $cm = get_coursemodule_from_instance('quiz', $attempt->quiz, $params['courseid'], false, MUST_EXIST);
+        $html_conjunto .= \libDedication_atu::devuelve_informe_respuestas_html(
+            $attempt->attemptid,
+            $cm->id,
+            $params['courseid']
+        );
     }
-    $_GET['instanceid'] = $block_instance->id;
-    $_REQUEST['instanceid'] = $block_instance->id;
-    
-    // Los parámetros que controlan la lógica interna del script
-    $_GET['task']       = 'pdf_conjunto_pruebas';
-    $_REQUEST['task']   = 'pdf_conjunto_pruebas';
-    
-    $_GET['modo_pdf']   = 'true'; // Le decimos que queremos el PDF
-    $_REQUEST['modo_pdf'] = 'true';
-    
-    $_GET['userid']     = $user->id; // El usuario para el que es el informe
-    $_REQUEST['userid'] = $user->id;
 
-    // Pasamos el array de attempts como lo esperaría el script
-    $_GET['attemptid']  = $attemptids;
-    $_REQUEST['attemptid'] = $attemptids;
+    $titulo_final = "Informe-todas-pruebas-" . str_replace(' ', '_', fullname($user)) . "-Curso_" . str_replace(' ', '_', $course->shortname);
 
-    // 4) --- CAPTURAR LA SALIDA DEL SCRIPT INCLUIDO ---
+    // PASO 5: Capturar la salida de la función original que genera el PDF
     ob_start();
     try {
-        // Incluimos el fichero. Al hacerlo, se ejecutará como si fuera una petición normal
-        // y leerá las variables $_GET y $_REQUEST que acabamos de falsear.
-        include($CFG->dirroot . '/blocks/dedication_atu/dedication_atu.php');
-
+        // Llamamos a la función que genera el PDF y que internamente hace die() o exit()
+        \libDedication_atu::genera_pdf_prueba($html_conjunto, $titulo_final);
     } catch (Exception $e) {
+        // En caso de que algo falle, nos aseguramos de limpiar el búfer y devolver un error
         ob_end_clean();
-        return ['status' => 'error', 'data' => null, 'message' => 'Excepción al incluir script: ' . $e->getMessage()];
+        return ['status' => 'error', 'data' => null, 'message' => 'Excepción al generar el PDF: ' . $e->getMessage()];
     }
 
-    // Recogemos lo que el script intentó enviar al navegador (el PDF)
+    // Obtenemos el contenido del búfer (el PDF binario)
     $pdf_binario = ob_get_contents();
+    // Limpiamos y cerramos el búfer para reanudar el flujo normal
     ob_end_clean();
-    
-    // A veces, el script puede imprimir un aviso o un error antes del PDF.
-    // Vamos a intentar limpiar la salida por si acaso.
-    // Buscamos el inicio del PDF, que siempre es "%PDF-".
-    $pdf_start_pos = strpos($pdf_binario, '%PDF-');
-    if ($pdf_start_pos !== false) {
-        $pdf_binario = substr($pdf_binario, $pdf_start_pos);
-    } else if (empty($pdf_binario)) {
-         return ['status' => 'error', 'data' => null, 'message' => 'La inclusión del script no produjo ninguna salida PDF válida.'];
+
+    // Verificación final: si la salida está vacía, algo falló silenciosamente
+    if (empty($pdf_binario)) {
+        return ['status' => 'error', 'data' => null, 'message' => 'La función de generación de PDF no produjo ninguna salida.'];
     }
 
-    // 5) Devolver el PDF capturado
+    // PASO 6: Devolver el PDF capturado, codificado en Base64
     return [
         'status'  => 'success',
         'data'    => base64_encode($pdf_binario),
-        'message' => 'PDF capturado por inclusión de script.'
+        'message' => 'PDF original capturado con éxito mediante simulación de contexto.'
     ];
 }
 public static function generar_pdf_informe_usuario($username, $courseid) {
