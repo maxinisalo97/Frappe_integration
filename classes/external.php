@@ -890,28 +890,35 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
 
 public static function generar_zip_informes_grupo($courseid, $groupid) {
     global $DB, $CFG;
+
+    // 1) Incluir librerías de tu customreport
+    require_once($CFG->dirroot . '/report/customreport/lib.php');          // contiene genera_informe_html()
     require_once($CFG->dirroot . '/report/customreport/models/messages.php');
     require_once($CFG->dirroot . '/report/customreport/models/chats.php');
 
-    // 1) Miembros del grupo
+    // 2) Recuperar miembros del grupo
     $members = $DB->get_records_sql("
         SELECT u.id, u.firstname, u.lastname
           FROM {groups_members} gm
           JOIN {user} u ON u.id = gm.userid
          WHERE gm.groupid = :g
-    ", ['g'=>$groupid]);
+    ", ['g' => $groupid]);
     if (empty($members)) {
         return ['status'=>'error','data'=>null,'message'=>'No hay alumnos en el grupo'];
     }
-    require_once($CFG->dirroot . '/report/customreport/lib.php');
-    // 2) Preparo ZIP
-    $zipFile = \tempnam(\sys_get_temp_dir(), 'atu_zip');
-    $zip     = new \ZipArchive();
-    $zip->open($zipFile, \ZipArchive::CREATE);
 
-    // 3) Generar un PDF por usuario
+    // 3) Crear archivo ZIP temporal
+    $zipFile = tempnam(sys_get_temp_dir(), 'atu_zip_');
+    $zip = new \ZipArchive();
+    $res = $zip->open($zipFile, \ZipArchive::CREATE);
+    if ($res !== true) {
+        throw new \moodle_exception("Error abriendo ZIP (código $res) en $zipFile");
+    }
+
+    // 4) Generar un PDF por cada miembro y añadirlo al ZIP
     foreach ($members as $m) {
-        $pdf = new MYPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+        // Instanciar tu clase TCPDF
+        $pdf = new MYPDF( PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false );
         $pdf->SetTitle('Informe ATU');
         $pdf->setPrintHeader(true);
         $pdf->setPrintFooter(true);
@@ -919,37 +926,44 @@ public static function generar_zip_informes_grupo($courseid, $groupid) {
         $pdf->setHeaderFont([PDF_FONT_NAME_MAIN,'',PDF_FONT_SIZE_MAIN]);
         $pdf->setFooterFont([PDF_FONT_NAME_DATA,'',PDF_FONT_SIZE_DATA]);
         $pdf->SetFont('helvetica','',10);
-        $pdf->SetMargins(PDF_MARGIN_LEFT,PDF_MARGIN_TOP,PDF_MARGIN_RIGHT);
+        $pdf->SetMargins(PDF_MARGIN_LEFT, PDF_MARGIN_TOP, PDF_MARGIN_RIGHT);
         $pdf->SetHeaderMargin(PDF_MARGIN_HEADER);
         $pdf->SetFooterMargin(PDF_MARGIN_FOOTER);
-        $pdf->SetAutoPageBreak(true,PDF_MARGIN_BOTTOM);
+        $pdf->SetAutoPageBreak(true, PDF_MARGIN_BOTTOM);
         $pdf->setImageScale(PDF_IMAGE_SCALE_RATIO);
         $pdf->AddPage();
 
-        // Esto es tu función global de customreport:
-        $html = \genera_informe_html($courseid, $m->id, true, $groupid);
+        // Generar HTML con tu función global
+        $html = genera_informe_html($courseid, $m->id, true, $groupid);
+        if (empty(trim($html))) {
+            throw new \moodle_exception("La función genera_informe_html devolvió contenido vacío para el usuario {$m->id}");
+        }
+
+        // Escribir HTML en el PDF
         $pdf->writeHTML($html, true, false, true, false, '');
         $pdf->lastPage();
 
-        // Guardo en fichero temporal
-        $tmpPdf = \tempnam(\sys_get_temp_dir(), 'atu_pdf');
+        // Volcar a un fichero temporal y añadirlo al ZIP
+        $tmpPdf = tempnam(sys_get_temp_dir(), 'atu_pdf_');
         $pdf->Output($tmpPdf, 'F');
-
-        // Lo añado al ZIP
         $zip->addFile($tmpPdf, "Informe_{$m->lastname}_{$m->firstname}.pdf");
-        @\unlink($tmpPdf);
+        @unlink($tmpPdf);
     }
 
+    // 5) Cerrar ZIP y comprobar que contiene archivos
     $zip->close();
+    if (filesize($zipFile) === 0) {
+        throw new \moodle_exception("El ZIP generado está vacío: $zipFile");
+    }
 
-    // 4) Devuelvo ZIP en Base64
-    $zipData = \file_get_contents($zipFile);
-    @\unlink($zipFile);
+    // 6) Leer ZIP y devolverlo en Base64
+    $zipData = file_get_contents($zipFile);
+    @unlink($zipFile);
 
     return [
-        'status' => 'success',
-        'data'   => base64_encode($zipData),
-        'message'=> ''
+        'status'  => 'success',
+        'data'    => base64_encode($zipData),
+        'message' => ''
     ];
 }
 }
