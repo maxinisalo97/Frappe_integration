@@ -925,9 +925,6 @@ public static function generar_pdf_informe_usuario($username, $courseid) {
     // Hacemos el reemplazo.
     $html = str_replace($cadena_a_buscar, $url_absoluta_logo, $html);
     // Si el logo no existe, no hacemos nada y el HTML se queda como está (con la ruta rota).
-    // =========================================================================
-    // FIN DE LA CORRECCIÓN
-    // =========================================================================
 
     // 5) Montar el PDF “en memoria” con el HTML ya corregido
     // Usamos tu clase MYPDF, sin necesidad de crear una nueva.
@@ -956,82 +953,75 @@ public static function generar_pdf_informe_usuario($username, $courseid) {
         'message' => ''
     ];
 }
-public static function generar_zip_informes_grupo($courseid, $groupid) {
+public static function generar_zip_informes_grupo($courseid, $usernames) {
     global $DB, $CFG;
 
-    // 1) Incluir librerías de tu customreport
-    require_once($CFG->dirroot . '/report/customreport/lib.php');          // contiene genera_informe_html()
-    require_once($CFG->dirroot . '/report/customreport/models/messages.php');
-    require_once($CFG->dirroot . '/report/customreport/models/chats.php');
+    // 1) Validación de parámetros
+    // Aceptamos un array de usernames en formato JSON string.
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'courseid'  => new external_value(PARAM_INT, 'ID del curso'),
+            'usernames' => new external_value(PARAM_RAW, 'Array de usernames en formato JSON')
+        ]),
+        ['courseid' => $courseid, 'usernames' => $usernames]
+    );
 
-    // 2) Recuperar miembros del grupo
-    $members = $DB->get_records_sql("
-        SELECT u.id, u.firstname, u.lastname
-          FROM {groups_members} gm
-          JOIN {user} u ON u.id = gm.userid
-         WHERE gm.groupid = :g
-    ", ['g' => $groupid]);
-    if (empty($members)) {
-        return ['status'=>'error','data'=>null,'message'=>'No hay alumnos en el grupo'];
+    // Decodificamos el JSON de usernames
+    $lista_usuarios = json_decode($params['usernames']);
+    if (!is_array($lista_usuarios) || empty($lista_usuarios)) {
+        return ['status'=>'error', 'data'=>null, 'message'=>'La lista de usuarios está vacía o no es un JSON válido.'];
     }
 
-    // 3) Crear archivo ZIP temporal
-    $zipFile = tempnam(sys_get_temp_dir(), 'atu_zip_');
+    // 2) Crear archivo ZIP temporal
+    $zipFile = tempnam(sys_get_temp_dir(), 'informes_zip_');
     $zip = new \ZipArchive();
-    $res = $zip->open($zipFile, \ZipArchive::CREATE);
-    if ($res !== true) {
-        throw new \moodle_exception("Error abriendo ZIP (código $res) en $zipFile");
+    if ($zip->open($zipFile, \ZipArchive::CREATE) !== true) {
+        // Usamos una excepción de Moodle para un error más informativo
+        throw new \moodle_exception('cannotcreatezip', 'error', '', null, $zipFile);
     }
 
-    // 4) Generar un PDF por cada miembro y añadirlo al ZIP
-    foreach ($members as $m) {
-        // Instanciar tu clase TCPDF
-        $pdf = new MYPDF( PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false );
-        $pdf->SetTitle('Informe ATU');
-        $pdf->setPrintHeader(true);
-        $pdf->setPrintFooter(true);
-        $pdf->SetHeaderData(PDF_HEADER_LOGO, PDF_HEADER_LOGO_WIDTH, PDF_HEADER_TITLE, PDF_HEADER_STRING);
-        $pdf->setHeaderFont([PDF_FONT_NAME_MAIN,'',PDF_FONT_SIZE_MAIN]);
-        $pdf->setFooterFont([PDF_FONT_NAME_DATA,'',PDF_FONT_SIZE_DATA]);
-        $pdf->SetFont('helvetica','',10);
-        $pdf->SetMargins(PDF_MARGIN_LEFT, PDF_MARGIN_TOP, PDF_MARGIN_RIGHT);
-        $pdf->SetHeaderMargin(PDF_MARGIN_HEADER);
-        $pdf->SetFooterMargin(PDF_MARGIN_FOOTER);
-        $pdf->SetAutoPageBreak(true, PDF_MARGIN_BOTTOM);
-        $pdf->setImageScale(PDF_IMAGE_SCALE_RATIO);
-        $pdf->AddPage();
-
-        // Generar HTML con tu función global
-        $html = genera_informe_html($courseid, $m->id, true, $groupid);
-        if (empty(trim($html))) {
-            throw new \moodle_exception("La función genera_informe_html devolvió contenido vacío para el usuario {$m->id}");
+    // 3) Generar un PDF por cada usuario y añadirlo al ZIP
+    foreach ($lista_usuarios as $username) {
+        // Obtenemos los datos del usuario para el nombre del archivo
+        $user = $DB->get_record('user', ['username' => $username], 'id, firstname, lastname', IGNORE_MISSING);
+        if (!$user) {
+            // Si un usuario no existe, simplemente lo saltamos y continuamos con el siguiente
+            continue;
         }
 
-        // Escribir HTML en el PDF
-        $pdf->writeHTML($html, true, false, true, false, '');
-        $pdf->lastPage();
+        // Llamamos a nuestra propia función que ya genera el PDF correctamente.
+        $respuesta_pdf = self::generar_pdf_informe_usuario($username, $params['courseid']);
 
-        // Volcar a un fichero temporal y añadirlo al ZIP
-        $tmpPdf = tempnam(sys_get_temp_dir(), 'atu_pdf_');
-        $pdf->Output($tmpPdf, 'F');
-        $zip->addFile($tmpPdf, "Informe_{$m->lastname}_{$m->firstname}.pdf");
-        @unlink($tmpPdf);
+        // Comprobamos si la generación del PDF individual fue exitosa
+        if ($respuesta_pdf['status'] === 'success') {
+            // Decodificamos el PDF de Base64 para obtener los datos binarios
+            $pdf_binario = base64_decode($respuesta_pdf['data']);
+            
+            // Creamos un nombre de archivo limpio
+            $nombre_archivo = "Informe_" . preg_replace('/[^A-Za-z0-9_\-]/', '', $user->lastname) . "_" . preg_replace('/[^A-Za-z0-9_\-]/', '', $user->firstname) . ".pdf";
+
+            // Añadimos el PDF al ZIP directamente desde la memoria
+            $zip->addFromString($nombre_archivo, $pdf_binario);
+        }
     }
 
-    // 5) Cerrar ZIP y comprobar que contiene archivos
+    // 4) Cerrar el ZIP y comprobar si se añadieron archivos
+    $num_files = $zip->numFiles;
     $zip->close();
-    if (filesize($zipFile) === 0) {
-        throw new \moodle_exception("El ZIP generado está vacío: $zipFile");
+
+    if ($num_files === 0) {
+        @unlink($zipFile); // Limpiamos el archivo temporal vacío
+        return ['status'=>'error', 'data'=>null, 'message'=>'No se pudo generar ningún informe para los usuarios proporcionados.'];
     }
 
-    // 6) Leer ZIP y devolverlo en Base64
+    // 5) Leer el contenido binario del ZIP y devolverlo en Base64
     $zipData = file_get_contents($zipFile);
-    @unlink($zipFile);
+    @unlink($zipFile); // Limpiamos el archivo temporal
 
     return [
         'status'  => 'success',
         'data'    => base64_encode($zipData),
-        'message' => ''
+        'message' => "ZIP generado con {$num_files} informes."
     ];
 }
 }
