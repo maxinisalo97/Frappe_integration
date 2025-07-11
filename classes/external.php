@@ -813,7 +813,7 @@ public static function obtener_notas_curso($courseid) {
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
     global $DB, $CFG;
 
-    // 1) Validación y obtención de datos
+    // 1) Validación y obtención de datos (sin cambios)
     $params = self::validate_parameters(
         new external_function_parameters([
             'courseid' => new external_value(PARAM_INT, 'ID de curso'),
@@ -838,46 +838,44 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     $block_instance = $DB->get_record('block_instances', ['blockname' => 'dedication_atu', 'parentcontextid' => $context->id], 'id', IGNORE_MISSING);
     if (!$block_instance) { return ['status' => 'error', 'data' => null, 'message' => 'El bloque dedication_atu no está en este curso.']; }
 
-    // 2) --- CONSTRUIR LA URL MANUALMENTE ---
+    // 2) Construir la URL con el token de bypass de sesión
     
-    // Base de la URL
+    // Obtenemos un token de sesión temporal para el usuario administrador.
+    // Esto permite que la petición interna sea autenticada sin necesidad de un login completo.
+    $admin = get_admin();
+    $logintoken = \core\session\manager::get_login_token($admin->id);
+    if (empty($logintoken)) {
+        return ['status' => 'error', 'data' => null, 'message' => 'No se pudo generar un token de login para la petición interna.'];
+    }
+
     $base_url = $CFG->wwwroot . '/blocks/dedication_atu/dedication_atu.php';
     
-    // Parámetros simples
     $query_params = [
         'task'       => 'pdf_conjunto_pruebas',
         'courseid'   => $params['courseid'],
         'instanceid' => $block_instance->id,
         'userid'     => $user->id,
-        'modo_pdf'   => 'true'
+        'modo_pdf'   => 'true',
+        'logintoken' => $logintoken // Añadimos el token a la URL
     ];
     
-    // Construimos la primera parte de la query string
     $url_string = $base_url . '?' . http_build_query($query_params);
-    
-    // Añadimos los parámetros de array 'attemptid[]' manualmente
     foreach ($quiz_attempts_records as $attempt) {
         $url_string .= '&attemptid[]=' . $attempt->attemptid;
     }
-    
-    // Ya tenemos la URL completa y formateada correctamente como un string.
 
-    // 3) Hacer una petición HTTP interna a esa URL para obtener el PDF
+    // 3) Hacer una petición HTTP interna. Ya no necesitamos cambiar el usuario de la sesión.
     try {
-        $curl = new \curl();
-        $admin = get_admin();
-        \core\session\manager::set_user($admin);
+        $curl = new \curl(['cache' => false, 'followlocation' => true, 'timeout' => 120]);
 
         $pdf_binario = $curl->get($url_string);
-        
-        \core\session\manager::set_user($GLOBALS['USER']);
 
         if ($curl->errno) {
-            return ['status' => 'error', 'data' => null, 'message' => 'Error de cURL: ' . $curl->error];
+            return ['status' => 'error', 'data' => null, 'message' => 'Error de cURL: ' . $curl->error . ' en la URL: ' . $url_string];
         }
 
         if (strpos($pdf_binario, '%PDF-') === false) {
-             return ['status' => 'error', 'data' => null, 'message' => 'La respuesta de la URL no fue un PDF válido. Es posible que sea un error de Moodle. Respuesta: ' . substr(strip_tags($pdf_binario), 0, 500)];
+             return ['status' => 'error', 'data' => null, 'message' => 'La respuesta de la URL no fue un PDF válido. Es una página de error de Moodle. Respuesta: ' . substr(strip_tags($pdf_binario), 0, 500)];
         }
 
     } catch (Exception $e) {
@@ -888,7 +886,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     return [
         'status'  => 'success',
         'data'    => base64_encode($pdf_binario),
-        'message' => 'PDF generado mediante petición interna a la URL original.'
+        'message' => 'PDF generado mediante petición interna con token de login.'
     ];
 }
 public static function generar_pdf_informe_usuario($username, $courseid) {
