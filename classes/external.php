@@ -825,51 +825,59 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     $user = $DB->get_record('user', ['username' => $params['username']], 'id', IGNORE_MISSING);
     if (!$user) { return ['status' => 'error', 'data' => null, 'message' => 'Usuario no existe']; }
 
-    $quiz_attempts = $DB->get_records_sql("
+    $quiz_attempts_records = $DB->get_records_sql("
         SELECT qa.id AS attemptid FROM {quiz_attempts} qa
         JOIN {grade_items} gi ON gi.iteminstance = qa.quiz
         WHERE gi.courseid = :c AND gi.itemname LIKE :k AND qa.userid = :u
         ORDER BY qa.attempt
     ", ['c' => $params['courseid'], 'k' => '%prueba%', 'u' => $user->id]);
     
-    if (empty($quiz_attempts)) { return ['status' => 'error', 'data' => null, 'message' => 'No hay pruebas para este usuario.']; }
+    if (empty($quiz_attempts_records)) { return ['status' => 'error', 'data' => null, 'message' => 'No hay pruebas para este usuario.']; }
 
-    // Buscamos el ID de la instancia del bloque en el curso
     $context = \context_course::instance($params['courseid']);
     $block_instance = $DB->get_record('block_instances', ['blockname' => 'dedication_atu', 'parentcontextid' => $context->id], 'id', IGNORE_MISSING);
     if (!$block_instance) { return ['status' => 'error', 'data' => null, 'message' => 'El bloque dedication_atu no está en este curso.']; }
 
-    // 2) Construir la URL exacta que genera el PDF correcto
-    $url = new \moodle_url('/blocks/dedication_atu/dedication_atu.php', [
+    // 2) --- CONSTRUIR LA URL MANUALMENTE ---
+    
+    // Base de la URL
+    $base_url = $CFG->wwwroot . '/blocks/dedication_atu/dedication_atu.php';
+    
+    // Parámetros simples
+    $query_params = [
         'task'       => 'pdf_conjunto_pruebas',
         'courseid'   => $params['courseid'],
         'instanceid' => $block_instance->id,
         'userid'     => $user->id,
-        'modo_pdf'   => 'true', // ¡Importante!
-        'attemptid'  => array_keys($quiz_attempts) // Pasamos todos los IDs de intento
-    ]);
+        'modo_pdf'   => 'true'
+    ];
+    
+    // Construimos la primera parte de la query string
+    $url_string = $base_url . '?' . http_build_query($query_params);
+    
+    // Añadimos los parámetros de array 'attemptid[]' manualmente
+    foreach ($quiz_attempts_records as $attempt) {
+        $url_string .= '&attemptid[]=' . $attempt->attemptid;
+    }
+    
+    // Ya tenemos la URL completa y formateada correctamente como un string.
 
     // 3) Hacer una petición HTTP interna a esa URL para obtener el PDF
     try {
-        // Usamos la clase 'curl' de Moodle, que es más fiable.
         $curl = new \curl();
-        // Moodle puede necesitar cookies de sesión para autenticar la petición interna.
-        // Hacemos login como un administrador para asegurar permisos.
         $admin = get_admin();
         \core_session\manager::set_user($admin);
 
-        $pdf_binario = $curl->get($url->out(false)); // el 'false' da la URL como string
+        $pdf_binario = $curl->get($url_string);
         
-        // Restauramos el usuario original de la API
         \core_session\manager::set_user($GLOBALS['USER']);
 
         if ($curl->errno) {
             return ['status' => 'error', 'data' => null, 'message' => 'Error de cURL: ' . $curl->error];
         }
 
-        // Comprobación final
         if (strpos($pdf_binario, '%PDF-') === false) {
-             return ['status' => 'error', 'data' => null, 'message' => 'La respuesta de la URL no fue un PDF válido.'];
+             return ['status' => 'error', 'data' => null, 'message' => 'La respuesta de la URL no fue un PDF válido. Es posible que sea un error de Moodle. Respuesta: ' . substr(strip_tags($pdf_binario), 0, 500)];
         }
 
     } catch (Exception $e) {
