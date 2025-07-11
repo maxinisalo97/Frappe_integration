@@ -890,6 +890,8 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
 
 public static function generar_zip_informes_grupo($courseid, $groupid) {
     global $DB, $CFG;
+    require_once($CFG->dirroot . '/report/customreport/models/messages.php');
+    require_once($CFG->dirroot . '/report/customreport/models/chats.php');
 
     // 1) Miembros del grupo
     $members = $DB->get_records_sql("
@@ -901,7 +903,7 @@ public static function generar_zip_informes_grupo($courseid, $groupid) {
     if (empty($members)) {
         return ['status'=>'error','data'=>null,'message'=>'No hay alumnos en el grupo'];
     }
-
+    require_once($CFG->dirroot . '/report/customreport/lib.php');
     // 2) Preparo ZIP
     $zipFile = \tempnam(\sys_get_temp_dir(), 'atu_zip');
     $zip     = new \ZipArchive();
