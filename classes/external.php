@@ -32,7 +32,6 @@ require_once($blockdir . '/lib.php');
  * Para el ZIP de varios informes de grupo.
  */
 class MYPDF extends \TCPDF {
-    public function Header() {}
     public function Footer() {
         $this->SetY(-15);
         $this->SetFont('helvetica','I',8);
