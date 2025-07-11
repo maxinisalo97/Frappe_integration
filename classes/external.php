@@ -916,23 +916,14 @@ public static function generar_pdf_informe_usuario($username, $courseid) {
     // 4) Generar el HTML completo (con la cabecera original, como querías)
     $html = genera_informe_html($params['courseid'], $user->id, true, null);
     // La ruta relativa que usa el HTML original
-    $ruta_relativa_a_buscar = 'src="images/logo.png"';
+    // La cadena a buscar. Usaremos una que sea un poco más específica para evitar falsos positivos.
+    $cadena_a_buscar = 'src="images/logo.png"';
     
-    // La ruta física REAL donde se encuentra el logo en el sistema de archivos
-    $ruta_fisica_real_logo = $CFG->dirroot . '/report/customreport/images/logo.png';
-
-    // Verificamos que el logo existe para no causar errores
-    if (file_exists($ruta_fisica_real_logo)) {
-        // Leemos el contenido binario de la imagen
-        $logo_data = file_get_contents($ruta_fisica_real_logo);
-        // Obtenemos el tipo de imagen (png, jpg, etc.)
-        $tipo_imagen = pathinfo($ruta_fisica_real_logo, PATHINFO_EXTENSION);
-        // Creamos la cadena completa para la imagen incrustada en Base64
-        $logo_incrustado_base64 = 'src="data:image/' . $tipo_imagen . ';base64,' . base64_encode($logo_data) . '"';
-        
-        // Reemplazamos la ruta rota por la imagen incrustada en el HTML
-        $html = str_replace($ruta_relativa_a_buscar, $logo_incrustado_base64, $html);
-    }
+    // La URL absoluta completa al logo, que el servidor web puede entender.
+    $url_absoluta_logo = 'src="' . $CFG->wwwroot . '/report/customreport/images/logo.png"';
+    
+    // Hacemos el reemplazo.
+    $html = str_replace($cadena_a_buscar, $url_absoluta_logo, $html);
     // Si el logo no existe, no hacemos nada y el HTML se queda como está (con la ruta rota).
     // =========================================================================
     // FIN DE LA CORRECCIÓN
