@@ -85,6 +85,7 @@ class external extends external_api {
             'obtener_notas_curso'            => 'obtener_notas_curso',
             'generar_pdf_conjunto_usuario'   => 'generar_pdf_conjunto_usuario',
             'generar_zip_informes_grupo' => 'generar_zip_informes_grupo',
+            'generar_pdf_informe_usuario' => 'generar_pdf_informe_usuario',
         ];
 
         if (!isset($allowed[$params['method']])) {
@@ -887,7 +888,63 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         'message'=> 'PDF generado correctamente'
     ];
 }
+public static function generar_pdf_informe_usuario($username, $courseid) {
+    global $DB, $CFG;
 
+    // 1) Validación de parámetros
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'username' => new external_value(PARAM_USERNAME, 'Username en Moodle'),
+            'courseid' => new external_value(PARAM_INT,      'ID de curso'),
+        ]),
+        compact('username', 'courseid')
+    );
+
+    // 2) Cargar el usuario
+    $user = $DB->get_record('user',
+        ['username' => $params['username']],
+        'id, firstname, lastname',
+        IGNORE_MISSING
+    );
+    if (!$user) {
+        return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
+    }
+
+    // 3) Incluir el lib del customreport para tener genera_informe_html()
+    $reportdir = \core_component::get_plugin_directory('report', 'customreport');
+    require_once($reportdir . '/lib.php');
+
+    // 4) Generar el HTML completo
+    $html = genera_informe_html($params['courseid'], $user->id, true, null);
+
+    // 5) Montar el PDF “en memoria”
+    $pdf = new \MYPDF2(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+    $pdf->SetTitle("Informe {$user->firstname} {$user->lastname}");
+    $pdf->setPrintHeader(true);
+    $pdf->setPrintFooter(true);
+    $pdf->SetHeaderData(PDF_HEADER_LOGO, PDF_HEADER_LOGO_WIDTH, PDF_HEADER_TITLE, PDF_HEADER_STRING);
+    $pdf->setHeaderFont([PDF_FONT_NAME_MAIN,'',PDF_FONT_SIZE_MAIN]);
+    $pdf->setFooterFont([PDF_FONT_NAME_DATA,'',PDF_FONT_SIZE_DATA]);
+    $pdf->SetDefaultMonospacedFont(PDF_FONT_MONOSPACED);
+    $pdf->SetMargins(PDF_MARGIN_LEFT, PDF_MARGIN_TOP, PDF_MARGIN_RIGHT);
+    $pdf->SetHeaderMargin(PDF_MARGIN_HEADER);
+    $pdf->SetFooterMargin(PDF_MARGIN_FOOTER);
+    $pdf->SetAutoPageBreak(true, PDF_MARGIN_BOTTOM);
+    $pdf->setImageScale(PDF_IMAGE_SCALE_RATIO);
+
+    $pdf->AddPage();
+    $pdf->SetFont('helvetica','',10);
+    $pdf->writeHTML($html, true, false, true, false, '');
+    $pdf->lastPage();
+
+    // 6) Devolver el PDF en Base64
+    $raw = $pdf->Output('', 'S');
+    return [
+        'status'  => 'success',
+        'data'    => base64_encode($raw),
+        'message' => ''
+    ];
+}
 public static function generar_zip_informes_grupo($courseid, $groupid) {
     global $DB, $CFG;
 
