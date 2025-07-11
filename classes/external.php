@@ -864,11 +864,147 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     // *** Aquí: Output en variable con el parámetro 'S' ***
     $rawpdf = $pdf->Output('', 'S');
 
-    // 6) Y lo devolvemos en Base64 para tu API REST.
+    return [
+        'status' => 'success',
+        'data'   => base64_encode($rawpdf),
+        'message'=> 'PDF generado correctamente'
+    ];
+}
+public static function generar_pdf_informe_usuario($username, $courseid) {
+    global $DB, $CFG;
+
+    // 1) Validación de parámetros
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'username' => new external_value(PARAM_USERNAME, 'Username en Moodle'),
+            'courseid' => new external_value(PARAM_INT,      'ID de curso'),
+        ]),
+        compact('username', 'courseid')
+    );
+
+    // 2) Cargar el usuario
+    $user = $DB->get_record('user',
+        ['username' => $params['username']],
+        'id, firstname, lastname',
+        IGNORE_MISSING
+    );
+    if (!$user) {
+        return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
+    }
+
+    // 3) Incluir el lib del customreport para tener genera_informe_html()
+    $reportdir = \core_component::get_plugin_directory('report', 'customreport');
+    require_once($reportdir . '/lib.php');
+
+    // 4) Generar el HTML completo (con la cabecera original, como querías)
+    $html = genera_informe_html($params['courseid'], $user->id, true, null);
+    // La ruta relativa que usa el HTML original
+    // La cadena a buscar. Usaremos una que sea un poco más específica para evitar falsos positivos.
+    $cadena_a_buscar = 'src="images/logo.png"';
+    
+    // La URL absoluta completa al logo, que el servidor web puede entender.
+    $url_absoluta_logo = 'src="' . $CFG->wwwroot . '/report/customreport/images/logo.png"';
+    
+    // Hacemos el reemplazo.
+    $html = str_replace($cadena_a_buscar, $url_absoluta_logo, $html);
+    // Si el logo no existe, no hacemos nada y el HTML se queda como está (con la ruta rota).
+
+    // 5) Montar el PDF “en memoria” con el HTML ya corregido
+    // Usamos tu clase MYPDF, sin necesidad de crear una nueva.
+    $pdf = new MYPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+    $pdf->SetTitle("Informe {$user->firstname} {$user->lastname}");
+    
+    $pdf->setPrintHeader(false); // Ponemos a false para evitar cualquier cabecera por defecto de TCPDF
+    $pdf->setPrintFooter(true);  // Mantenemos el pie de página
+
+    $pdf->SetMargins(PDF_MARGIN_LEFT, PDF_MARGIN_TOP, PDF_MARGIN_RIGHT);
+    $pdf->SetHeaderMargin(PDF_MARGIN_HEADER);
+    $pdf->SetFooterMargin(PDF_MARGIN_FOOTER);
+    $pdf->SetAutoPageBreak(true, PDF_MARGIN_BOTTOM);
+    $pdf->setImageScale(PDF_IMAGE_SCALE_RATIO);
+
+    $pdf->AddPage();
+    $pdf->SetFont('helvetica','',10);
+    $pdf->writeHTML($html, true, false, true, false, '');
+    $pdf->lastPage();
+
+    // 6) Devolver el PDF en Base64
+    $raw = $pdf->Output('', 'S');
     return [
         'status'  => 'success',
-        'data'    => base64_encode($rawpdf),
-        'message' => 'PDF generado correctamente.'
+        'data'    => base64_encode($raw),
+        'message' => ''
+    ];
+}
+public static function generar_zip_informes_grupo($courseid, $usernames) {
+    global $DB, $CFG;
+
+    // 1) Validación de parámetros
+    // Aceptamos un array de usernames en formato JSON string.
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'courseid'  => new external_value(PARAM_INT, 'ID del curso'),
+            'usernames' => new external_value(PARAM_RAW, 'Array de usernames en formato JSON')
+        ]),
+        ['courseid' => $courseid, 'usernames' => $usernames]
+    );
+
+    // Decodificamos el JSON de usernames
+    $lista_usuarios = json_decode($params['usernames']);
+    if (!is_array($lista_usuarios) || empty($lista_usuarios)) {
+        return ['status'=>'error', 'data'=>null, 'message'=>'La lista de usuarios está vacía o no es un JSON válido.'];
+    }
+
+    // 2) Crear archivo ZIP temporal
+    $zipFile = tempnam(sys_get_temp_dir(), 'informes_zip_');
+    $zip = new \ZipArchive();
+    if ($zip->open($zipFile, \ZipArchive::CREATE) !== true) {
+        // Usamos una excepción de Moodle para un error más informativo
+        throw new \moodle_exception('cannotcreatezip', 'error', '', null, $zipFile);
+    }
+
+    // 3) Generar un PDF por cada usuario y añadirlo al ZIP
+    foreach ($lista_usuarios as $username) {
+        // Obtenemos los datos del usuario para el nombre del archivo
+        $user = $DB->get_record('user', ['username' => $username], 'id, firstname, lastname', IGNORE_MISSING);
+        if (!$user) {
+            // Si un usuario no existe, simplemente lo saltamos y continuamos con el siguiente
+            continue;
+        }
+
+        // Llamamos a nuestra propia función que ya genera el PDF correctamente.
+        $respuesta_pdf = self::generar_pdf_informe_usuario($username, $params['courseid']);
+
+        // Comprobamos si la generación del PDF individual fue exitosa
+        if ($respuesta_pdf['status'] === 'success') {
+            // Decodificamos el PDF de Base64 para obtener los datos binarios
+            $pdf_binario = base64_decode($respuesta_pdf['data']);
+            
+            // Creamos un nombre de archivo limpio
+            $nombre_archivo = "Informe_" . preg_replace('/[^A-Za-z0-9_\-]/', '', $user->lastname) . "_" . preg_replace('/[^A-Za-z0-9_\-]/', '', $user->firstname) . ".pdf";
+
+            // Añadimos el PDF al ZIP directamente desde la memoria
+            $zip->addFromString($nombre_archivo, $pdf_binario);
+        }
+    }
+
+    // 4) Cerrar el ZIP y comprobar si se añadieron archivos
+    $num_files = $zip->numFiles;
+    $zip->close();
+
+    if ($num_files === 0) {
+        @unlink($zipFile); // Limpiamos el archivo temporal vacío
+        return ['status'=>'error', 'data'=>null, 'message'=>'No se pudo generar ningún informe para los usuarios proporcionados.'];
+    }
+
+    // 5) Leer el contenido binario del ZIP y devolverlo en Base64
+    $zipData = file_get_contents($zipFile);
+    @unlink($zipFile); // Limpiamos el archivo temporal
+
+    return [
+        'status'  => 'success',
+        'data'    => base64_encode($zipData),
+        'message' => "ZIP generado con {$num_files} informes."
     ];
 }
 
