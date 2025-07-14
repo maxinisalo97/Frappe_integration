@@ -846,7 +846,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario.'];
     }
 
-    $context = \context_course::instance($params['courseid']);
+    $context  = \context_course::instance($params['courseid']);
     $blockrec = $DB->get_record('block_instances', [
         'blockname'=>'dedication_atu',
         'parentcontextid'=>$context->id
@@ -855,30 +855,37 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         return ['status'=>'error','data'=>null,'message'=>'El bloque dedication_atu no está en este curso.'];
     }
 
-    // 2) Arrancamos bootstrap completo de Moodle
-    require_once($CFG->dirroot . '/config.php');       // $CFG, autoload, sesiones...
+    // 2) Bootstrap completo de Moodle
+    require_once($CFG->dirroot . '/config.php');       // carga $CFG, autoloader, sesión...
     require_once($CFG->libdir   . '/externallib.php'); // external_api, etc.
     require_once($CFG->libdir   . '/tcpdf/tcpdf.php'); // TCPDF
 
-    // Simulamos $_GET para que el script vea los parámetros correctos
+    // 3) Simulamos $_GET con TODOS los parámetros (incluido attemptid[] como array)
     $_GET = [
         'task'       => 'pdf_conjunto_pruebas',
         'courseid'   => $params['courseid'],
         'instanceid' => $blockrec->id,
         'modo_pdf'   => 'true',
         'userid'     => $user->id,
-        // el array de attemptid[]:
-        'attemptid'  => array_map(function($a){return $a->attemptid;}, $attempts),
+        'attemptid'  => array_map(function($a){ return $a->attemptid; }, $attempts),
     ];
 
-    // 3) Preparamos $PAGE como si Moodle sirviera la página
+    // 4) Preparamos $PAGE SIN pasar el array attemptid
+    $scalarurl = [
+        'task'       => 'pdf_conjunto_pruebas',
+        'courseid'   => $params['courseid'],
+        'instanceid' => $blockrec->id,
+        'modo_pdf'   => 'true',
+        'userid'     => $user->id
+    ];
     $PAGE->set_context($context);
     $PAGE->set_url(new \moodle_url(
-        '/blocks/dedication_atu/dedication_atu.php', $_GET
+        '/blocks/dedication_atu/dedication_atu.php',
+        $scalarurl
     ));
     $PAGE->set_pagelayout('report');
 
-    // 4) Incluimos el script ORIGINAL dentro de su carpeta
+    // 5) Incluimos el script ORIGINAL dentro de su carpeta
     $blockdir = $CFG->dirroot . '/blocks/dedication_atu/';
     $origdir  = getcwd();
     chdir($blockdir);
@@ -896,9 +903,11 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         ];
     }
     $pdf = ob_get_clean();
+
+    // volvemos al directorio original
     chdir($origdir);
 
-    // 5) Validamos que sea un PDF
+    // 6) Validamos que sea un PDF válido
     if (strpos($pdf, '%PDF-') === false) {
         return [
             'status'=>'error',
@@ -908,14 +917,13 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         ];
     }
 
-    // 6) Lo devolvemos en Base64
+    // 7) Devolvemos el PDF en Base64
     return [
         'status'=>'success',
         'data'  => base64_encode($pdf),
         'message'=>'PDF generado correctamente, idéntico al de Moodle.'
     ];
 }
-
 
 public static function generar_pdf_informe_usuario($username, $courseid) {
     global $DB, $CFG;
