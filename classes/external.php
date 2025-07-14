@@ -860,18 +860,28 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     ];
 
     // 3) BOOTSTRAP MOODLE y TCPDF
-    require_once($CFG->dirroot . '/config.php');            // carga $CFG, autoload, $DB...
-    require_once($CFG->libdir   . '/externallib.php');      // external_api
-    require_once($CFG->libdir   . '/tcpdf/tcpdf.php');      // TCPDF
+    require_once($CFG->dirroot . '/config.php');
+    require_once($CFG->libdir   . '/externallib.php');
+    require_once($CFG->libdir   . '/tcpdf/tcpdf.php');
 
-    // Prepara $PAGE para rutas relativas a CSS/JS
+    // Preparamos $PAGE sin pasar el array de attemptid
     $PAGE->set_context($context);
-    $PAGE->set_url(new \moodle_url('/blocks/dedication_atu/dedication_atu.php', $_GET));
+    $PAGE->set_url(new \moodle_url(
+        '/blocks/dedication_atu/dedication_atu.php',
+        [
+            'courseid'   => $params['courseid'],
+            'instanceid' => $blockrec->id,
+            'task'       => 'pdf_conjunto_pruebas',
+            'modo_pdf'   => 'true',
+            'userid'     => $user->id,
+            // <-- NO attemptid aquí
+        ]
+    ));
     $PAGE->set_pagelayout('report');
 
-    // 4) INCLUDE DENTRO DEL DIRECTORIO DEL BLOQUE
-    $blockdir    = $CFG->dirroot . '/blocks/dedication_atu/';
-    $origdir     = getcwd();
+    // 4) INCLUDE en directorio del bloque
+    $blockdir = $CFG->dirroot . '/blocks/dedication_atu/';
+    $origdir  = getcwd();
     chdir($blockdir);
 
     ob_start();
@@ -881,28 +891,28 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         ob_end_clean();
         chdir($origdir);
         return [
-            'status'=>'error',
-            'data'=>null,
-            'message'=>'Error al ejecutar el script: '.$e->getMessage()
+            'status'  => 'error',
+            'data'    => null,
+            'message' => 'Error al ejecutar el script: ' . $e->getMessage()
         ];
     }
     $rawpdf = ob_get_clean();
     chdir($origdir);
 
-    // 5) VALIDACIÓN Y RESPUESTA
+    // 5) Comprobación PDF y retorno
     if (strpos($rawpdf, '%PDF-') === false) {
         return [
-            'status'=>'error',
-            'data'=>null,
-            'message'=>'La salida no es un PDF válido. Salida: '.
-                       htmlspecialchars(substr($rawpdf,0,500))
+            'status'  => 'error',
+            'data'    => null,
+            'message' => 'La salida no es un PDF válido. Salida: '
+                         . htmlspecialchars(substr($rawpdf, 0, 500))
         ];
     }
 
     return [
-        'status'=>'success',
-        'data'=>base64_encode($rawpdf),
-        'message'=>'PDF generado correctamente mediante inclusión con bootstrap completo.'
+        'status'  => 'success',
+        'data'    => base64_encode($rawpdf),
+        'message' => 'PDF generado correctamente.'
     ];
 }
 
