@@ -813,7 +813,7 @@ public static function obtener_notas_curso($courseid) {
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
     global $DB, $CFG;
 
-    // 1) Validación y obtención de datos (igual que antes)…
+    // 1) Validación y obtención de datos
     $params = self::validate_parameters(
         new external_function_parameters([
             'courseid' => new external_value(PARAM_INT,      'ID de curso'),
@@ -821,10 +821,12 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         ]),
         ['courseid' => $courseid, 'username' => $username]
     );
-    $user = $DB->get_record('user', ['username'=>$params['username']], 'id', IGNORE_MISSING);
+
+    $user = $DB->get_record('user', ['username' => $params['username']], 'id', IGNORE_MISSING);
     if (!$user) {
-        return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
+        return ['status' => 'error', 'data' => null, 'message' => 'Usuario no existe'];
     }
+
     $records = $DB->get_records_sql("
         SELECT qa.id AS attemptid
           FROM {quiz_attempts} qa
@@ -833,21 +835,28 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
            AND gi.itemname LIKE :k
            AND qa.userid = :u
          ORDER BY qa.attempt
-    ", ['c'=>$params['courseid'],'k'=>'%prueba%','u'=>$user->id]);
+    ", [
+        'c' => $params['courseid'],
+        'k' => '%prueba%',
+        'u' => $user->id
+    ]);
+
     if (empty($records)) {
-        return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario.'];
-    }
-    $context  = \context_course::instance($params['courseid']);
-    $blockrec = $DB->get_record('block_instances', [
-        'blockname'=>'dedication_atu',
-        'parentcontextid'=>$context->id
-    ], 'id', IGNORE_MISSING);
-    if (!$blockrec) {
-        return ['status'=>'error','data'=>null,'message'=>'Bloque dedication_atu no está en este curso.'];
+        return ['status' => 'error', 'data' => null, 'message' => 'No hay pruebas para este usuario.'];
     }
 
-    // 2) Montamos la URL (igual que antes)
-    $base = $CFG->wwwroot . '/blocks/dedication_atu/dedication_atu.php';
+    $context  = \context_course::instance($params['courseid']);
+    $blockrec = $DB->get_record('block_instances', [
+        'blockname'       => 'dedication_atu',
+        'parentcontextid' => $context->id
+    ], 'id', IGNORE_MISSING);
+
+    if (!$blockrec) {
+        return ['status' => 'error', 'data' => null, 'message' => 'Bloque dedication_atu no está en este curso.'];
+    }
+
+    // 2) Montamos la URL completa con todos los parámetros menos el attemptid[] array
+    $base       = $CFG->wwwroot . '/blocks/dedication_atu/dedication_atu.php';
     $params_url = [
         'task'       => 'pdf_conjunto_pruebas',
         'courseid'   => $params['courseid'],
@@ -860,44 +869,51 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         $urlstr .= '&attemptid[]=' . $aid;
     }
 
-    // 3) cURL interno **con COOKIE DE SESIÓN** como admin
-    require_once($CFG->dirroot . '/config.php');  // asegura que session_start() ya corre
+    // 3) cURL interno con sesión de admin para capturar el PDF completo
+    require_once($CFG->dirroot . '/config.php');      // asegura session_start()
     $curl = new \curl();
 
-    // guarda el usuario actual y ponte admin
+    // Guardamos el usuario actual y nos ponemos como admin
     $olduser = $GLOBALS['USER'];
     \core\session\manager::set_user(get_admin());
 
-    // inyecta el cookie PHPSESSID para que Moodle reconozca tu sesión
+    // Inyectamos la cookie de sesión PHPSESSID para que Moodle reconozca la sesión admin
     $cookie = session_name() . '=' . session_id();
-    // sigue redirecciones (por si hay un redirect to login)
-    $curl->setopt([CURLOPT_FOLLOWLOCATION => true]);
 
-    $pdfbin = $curl->get($urlstr, [], [
-        'Cookie: ' . $cookie
-    ]);
+    // Definimos las opciones de cURL usando claves string
+    $curloptions = [
+        'CURLOPT_FOLLOWLOCATION' => true,
+        'CURLOPT_HTTPHEADER'     => ["Cookie: $cookie"],
+    ];
+    $curl->setopt($curloptions);
 
-    // restaurar usuario original
+    // Ejecutamos la petición GET
+    $pdfbin = $curl->get($urlstr);
+
+    // Restauramos el usuario original
     \core\session\manager::set_user($olduser);
 
+    // 4) Comprobación de errores de cURL
     if ($curl->errno) {
-        return ['status'=>'error','data'=>null,'message'=>'Error cURL: '.$curl->error];
+        return ['status' => 'error', 'data' => null, 'message' => 'Error cURL: ' . $curl->error];
     }
+
+    // 5) Validación de que realmente es un PDF
     if (strpos($pdfbin, '%PDF-') === false) {
         return [
-            'status'=>'error',
-            'data'=>null,
-            'message'=> 'Moodle devolvió contenido inválido al generar PDF:<br><pre>'
-                        . htmlspecialchars(substr(strip_tags($pdfbin),0,500))
-                        . '</pre>'
+            'status'  => 'error',
+            'data'    => null,
+            'message' => 'Moodle devolvió contenido inválido al generar PDF:<br><pre>' .
+                         htmlspecialchars(substr(strip_tags($pdfbin), 0, 500)) .
+                         '</pre>'
         ];
     }
 
-    // 4) Éxito: devolvemos exactamente el mismo PDF (con logo, estilos, pies, etc.)
+    // 6) Éxito: devolvemos el PDF en Base64
     return [
-        'status'=>'success',
-        'data'=> base64_encode($pdfbin),
-        'message'=> 'PDF capturado directamente del bloque, idéntico al de web.'
+        'status'  => 'success',
+        'data'    => base64_encode($pdfbin),
+        'message' => 'PDF capturado directamente del bloque, idéntico al de web.'
     ];
 }
 
