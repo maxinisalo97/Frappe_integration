@@ -811,9 +811,9 @@ public static function obtener_notas_curso($courseid) {
     ];
 }
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
-    global $DB, $CFG;
+    global $DB, $CFG, $PAGE;
 
-    // --- 1. OBTENCIÓN DE DATOS ---
+    // 1) VALIDACIÓN Y DATOS
     $params = self::validate_parameters(
         new external_function_parameters([
             'courseid' => new external_value(PARAM_INT, 'ID de curso'),
@@ -822,83 +822,90 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         ['courseid' => $courseid, 'username' => $username]
     );
     $user = $DB->get_record('user', ['username' => $params['username']], 'id', IGNORE_MISSING);
-    if (!$user) { return ['status' => 'error', 'data' => null, 'message' => 'Usuario no existe']; }
+    if (!$user) {
+        return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
+    }
 
-    $quiz_attempts_records = $DB->get_records_sql("
-        SELECT qa.id AS attemptid FROM {quiz_attempts} qa
-        JOIN {grade_items} gi ON gi.iteminstance = qa.quiz
-        WHERE gi.courseid = :c AND gi.itemname LIKE :k AND qa.userid = :u ORDER BY qa.attempt
-    ", ['c' => $params['courseid'], 'k' => '%prueba%', 'u' => $user->id]);
-    if (empty($quiz_attempts_records)) { return ['status' => 'error', 'data' => null, 'message' => 'No hay pruebas para este usuario.']; }
+    $quiz_attempts = $DB->get_records_sql("
+        SELECT qa.id AS attemptid
+          FROM {quiz_attempts} qa
+          JOIN {grade_items} gi ON gi.iteminstance = qa.quiz
+         WHERE gi.courseid = :c
+           AND gi.itemname LIKE :k
+           AND qa.userid = :u
+         ORDER BY qa.attempt
+    ", ['c'=>$params['courseid'],'k'=>'%prueba%','u'=>$user->id]);
+
+    if (empty($quiz_attempts)) {
+        return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario.'];
+    }
 
     $context = \context_course::instance($params['courseid']);
-    $block_instance = $DB->get_record('block_instances', ['blockname' => 'dedication_atu', 'parentcontextid' => $context->id], 'id', IGNORE_MISSING);
-    if (!$block_instance) { return ['status' => 'error', 'data' => null, 'message' => 'El bloque dedication_atu no está en este curso.']; }
+    $blockrec = $DB->get_record('block_instances', [
+        'blockname'=>'dedication_atu',
+        'parentcontextid'=>$context->id
+    ], 'id', IGNORE_MISSING);
+    if (!$blockrec) {
+        return ['status'=>'error','data'=>null,'message'=>'El bloque dedication_atu no está en este curso.'];
+    }
 
-    // --- 2. PREPARACIÓN DEL SCRIPT "HACKEADO" ---
-    $original_script_path = $CFG->dirroot . '/blocks/dedication_atu/dedication_atu.php';
-    $original_script_content = file_get_contents($original_script_path);
+    // 2) SIMULA PARÁMETROS GET
+    $_GET = [
+        'courseid'   => $params['courseid'],
+        'instanceid' => $blockrec->id,
+        'task'       => 'pdf_conjunto_pruebas',
+        'modo_pdf'   => 'true',
+        'userid'     => $user->id,
+        'attemptid'  => array_keys($quiz_attempts),
+    ];
 
-    // Comentamos la línea que nos da problemas
-    $hacked_script_content = str_replace(
-        'require_course_login($course);',
-        '// require_course_login($course); // Comentado por la API externa',
-        $original_script_content
-    );
+    // 3) BOOTSTRAP MOODLE y TCPDF
+    require_once($CFG->dirroot . '/config.php');            // carga $CFG, autoload, $DB...
+    require_once($CFG->libdir   . '/externallib.php');      // external_api
+    require_once($CFG->libdir   . '/tcpdf/tcpdf.php');      // TCPDF
 
-    // Creamos un archivo temporal para ejecutar el script modificado
-    $tmp_script_path = tempnam(sys_get_temp_dir(), 'moodle_pdf_gen_');
-    file_put_contents($tmp_script_path, $hacked_script_content);
+    // Prepara $PAGE para rutas relativas a CSS/JS
+    $PAGE->set_context($context);
+    $PAGE->set_url(new \moodle_url('/blocks/dedication_atu/dedication_atu.php', $_GET));
+    $PAGE->set_pagelayout('report');
 
-    // --- 3. SIMULACIÓN DE PARÁMETROS Y CAPTURA DE SALIDA ---
-    // Simulamos las variables $_GET que el script espera leer
-    $_GET['courseid']   = $params['courseid'];
-    $_GET['instanceid'] = $block_instance->id;
-    $_GET['task']       = 'pdf_conjunto_pruebas';
-    $_GET['modo_pdf']   = 'true';
-    $_GET['userid']     = $user->id;
-    $_GET['attemptid']  = array_keys($quiz_attempts_records);
-    $current_dir = getcwd(); // Guardamos el directorio actual
-    $block_dir = $CFG->dirroot . '/blocks/dedication_atu/'; // Directorio al que queremos cambiar
+    // 4) INCLUDE DENTRO DEL DIRECTORIO DEL BLOQUE
+    $blockdir    = $CFG->dirroot . '/blocks/dedication_atu/';
+    $origdir     = getcwd();
+    chdir($blockdir);
 
     ob_start();
     try {
-        if (chdir($block_dir)) { // Cambiamos al directorio del bloque
-            $currentuser = clone($GLOBALS['USER']);
-            \core\session\manager::set_user(get_admin());
-
-            // Ahora el include se ejecuta desde la perspectiva de la carpeta del bloque,
-            // y todas las rutas relativas como 'models/course.php' funcionarán.
-            include($tmp_script_path);
-
-            \core\session\manager::set_user($currentuser);
-            
-            chdir($current_dir); // ¡MUY IMPORTANTE! Volvemos al directorio original.
-        } else {
-            throw new \Exception("No se pudo cambiar al directorio del bloque: " . $block_dir);
-        }
-    } catch (Exception $e) {
+        include('dedication_atu.php');
+    } catch (\Throwable $e) {
         ob_end_clean();
-        chdir($current_dir); // Nos aseguramos de volver al directorio original en caso de error
-        unlink($tmp_script_path);
-        return ['status' => 'error', 'data' => null, 'message' => 'Excepción al ejecutar el script del informe: ' . $e->getMessage()];
+        chdir($origdir);
+        return [
+            'status'=>'error',
+            'data'=>null,
+            'message'=>'Error al ejecutar el script: '.$e->getMessage()
+        ];
+    }
+    $rawpdf = ob_get_clean();
+    chdir($origdir);
+
+    // 5) VALIDACIÓN Y RESPUESTA
+    if (strpos($rawpdf, '%PDF-') === false) {
+        return [
+            'status'=>'error',
+            'data'=>null,
+            'message'=>'La salida no es un PDF válido. Salida: '.
+                       htmlspecialchars(substr($rawpdf,0,500))
+        ];
     }
 
-    $pdf_binario = ob_get_contents();
-    ob_end_clean();
-    unlink($tmp_script_path);
-
-    if (strpos($pdf_binario, '%PDF-') === false) {
-        return ['status' => 'error', 'data' => null, 'message' => 'El script no generó un PDF. Salida: ' . htmlspecialchars(substr($pdf_binario, 0, 1000))];
-    }
-
-    // 5. DEVOLVER EL PDF CAPTURADO
     return [
-        'status'  => 'success',
-        'data'    => base64_encode($pdf_binario),
-        'message' => 'PDF generado mediante inclusión de script modificado.'
+        'status'=>'success',
+        'data'=>base64_encode($rawpdf),
+        'message'=>'PDF generado correctamente mediante inclusión con bootstrap completo.'
     ];
 }
+
 public static function generar_pdf_informe_usuario($username, $courseid) {
     global $DB, $CFG;
 
