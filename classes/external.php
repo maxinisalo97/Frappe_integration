@@ -1103,8 +1103,8 @@ public static function cuestionarios_calidad($courseid) {
 
     // 1) Validar parámetros
     $params = self::validate_parameters(
-        new external_function_parameters([
-            'courseid' => new external_value(PARAM_INT, 'ID de curso'),
+        new \external_function_parameters([
+            'courseid' => new \external_value(PARAM_INT, 'ID de curso'),
         ]),
         compact('courseid')
     );
@@ -1127,7 +1127,7 @@ public static function cuestionarios_calidad($courseid) {
           JOIN {modules} m  ON m.id = cm.module
           JOIN {assign} a   ON a.id = cm.instance
          WHERE cm.course = :cid
-           AND m.name = 'assign'
+           AND m.name    = 'assign'
            AND LOWER(a.name) LIKE :pattern
     ";
     $assigns = $DB->get_records_sql($sql, [
@@ -1143,7 +1143,7 @@ public static function cuestionarios_calidad($courseid) {
     }
 
     // 4) Para cada tarea de calidad, extraer todos los ficheros de sus entregas
-    $fs     = get_file_storage();
+    $fs     = \get_file_storage();
     $result = [];
 
     foreach ($assigns as $assign) {
@@ -1171,7 +1171,7 @@ public static function cuestionarios_calidad($courseid) {
                     'userid'       => $sub->userid,
                     'filename'     => $file->get_filename(),
                     'filesize'     => $file->get_filesize(),
-                    'fileurl'      => moodle_url::make_pluginfile_url(
+                    'fileurl'      => \moodle_url::make_pluginfile_url(
                         $file->get_contextid(),
                         $file->get_component(),
                         $file->get_filearea(),
@@ -1209,6 +1209,7 @@ public static function cuestionarios_calidad($courseid) {
         'message' => 'Archivos de cuestionarios de calidad extraídos correctamente'
     ];
 }
+
 
 }
 
