@@ -1147,7 +1147,7 @@ public static function cuestionarios_calidad($courseid) {
     $result = [];
 
     foreach ($assigns as $assign) {
-        $context = context_module::instance($assign->cmid);
+        $context = \context_module::instance($assign->cmid);
 
         // Todas las entregas de esta tarea
         $subs = $DB->get_records('assign_submission', ['assignment' => $assign->assignid]);
