@@ -85,6 +85,7 @@ class external extends external_api {
             'generar_pdf_conjunto_usuario'   => 'generar_pdf_conjunto_usuario',
             'generar_zip_informes_grupo' => 'generar_zip_informes_grupo',
             'generar_pdf_informe_usuario' => 'generar_pdf_informe_usuario',
+            'cuestionarios_calidad' => 'cuestionarios_calidad',
         ];
 
         if (!isset($allowed[$params['method']])) {
@@ -1062,4 +1063,124 @@ public static function generar_zip_informes_grupo($courseid, $usernames) {
         'message' => "ZIP generado con {$num_files} informes."
     ];
 }
+/**
+ * Método interno: extraer archivos de las entregas de los assign cuyo nombre
+ * contenga "evaluación de la calidad" en un curso dado.
+ *
+ * @param int $courseid ID del curso
+ * @return array Estructura con status, data y message
+ */
+public static function cuestionarios_calidad($courseid) {
+    global $DB, $CFG;
+
+    // 1) Validar parámetros
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'courseid' => new external_value(PARAM_INT, 'ID de curso'),
+        ]),
+        compact('courseid')
+    );
+
+    // 2) Comprobar curso
+    if (!$DB->record_exists('course', ['id' => $params['courseid']])) {
+        return [
+            'status'  => 'error',
+            'data'    => [],
+            'message' => 'Curso no existe'
+        ];
+    }
+
+    // 3) Listar solo los módulos assign que tengan en su nombre "evaluación de la calidad"
+    $sql = "
+        SELECT cm.id   AS cmid,
+               a.id    AS assignid,
+               a.name  AS nombre
+          FROM {course_modules} cm
+          JOIN {modules} m  ON m.id = cm.module
+          JOIN {assign} a   ON a.id = cm.instance
+         WHERE cm.course = :cid
+           AND m.name = 'assign'
+           AND LOWER(a.name) LIKE :pattern
+    ";
+    $assigns = $DB->get_records_sql($sql, [
+        'cid'     => $params['courseid'],
+        'pattern' => '%evaluación de la calidad%'
+    ]);
+    if (empty($assigns)) {
+        return [
+            'status'  => 'error',
+            'data'    => [],
+            'message' => 'No se han encontrado cuestionarios de calidad en este curso'
+        ];
+    }
+
+    // 4) Para cada tarea de calidad, extraer todos los ficheros de sus entregas
+    $fs     = get_file_storage();
+    $result = [];
+
+    foreach ($assigns as $assign) {
+        $context = context_module::instance($assign->cmid);
+
+        // Todas las entregas de esta tarea
+        $subs = $DB->get_records('assign_submission', ['assignment' => $assign->assignid]);
+        if (empty($subs)) {
+            continue;
+        }
+
+        $filesall = [];
+        foreach ($subs as $sub) {
+            $files = $fs->get_area_files(
+                $context->id,
+                'assignsubmission_file',
+                'submission_files',
+                $sub->id,
+                'id',
+                false
+            );
+            foreach ($files as $file) {
+                $filesall[] = [
+                    'submissionid' => $sub->id,
+                    'userid'       => $sub->userid,
+                    'filename'     => $file->get_filename(),
+                    'filesize'     => $file->get_filesize(),
+                    'fileurl'      => moodle_url::make_pluginfile_url(
+                        $file->get_contextid(),
+                        $file->get_component(),
+                        $file->get_filearea(),
+                        $file->get_itemid(),
+                        $file->get_filepath(),
+                        $file->get_filename(),
+                        true
+                    )->out(false)
+                ];
+            }
+        }
+
+        if (!empty($filesall)) {
+            $result[] = [
+                'cmid'     => $assign->cmid,
+                'assignid' => $assign->assignid,
+                'name'     => $assign->nombre,
+                'files'    => $filesall
+            ];
+        }
+    }
+
+    if (empty($result)) {
+        return [
+            'status'  => 'error',
+            'data'    => [],
+            'message' => 'No hay entregas con archivos en los cuestionarios de calidad'
+        ];
+    }
+
+    // 5) Devolver datos
+    return [
+        'status'  => 'success',
+        'data'    => $result,
+        'message' => 'Archivos de cuestionarios de calidad extraídos correctamente'
+    ];
 }
+
+}
+
