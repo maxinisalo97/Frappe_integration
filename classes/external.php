@@ -813,6 +813,11 @@ public static function obtener_notas_curso($courseid) {
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
     global $DB, $CFG, $PAGE;
 
+    // 0) Bootstrap de Moodle y librerías externas
+    require_once($CFG->dirroot . '/config.php');
+    require_once($CFG->libdir   . '/externallib.php');
+    require_once($CFG->libdir   . '/tcpdf/tcpdf.php');
+
     // 1) Validación y obtención de datos
     $params = self::validate_parameters(
         new external_function_parameters([
@@ -823,11 +828,12 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     );
 
     $user = $DB->get_record('user',
-        ['username' => $params['username']], 'id', IGNORE_MISSING);
+        ['username' => $params['username']], 'id, firstname, lastname', IGNORE_MISSING);
     if (!$user) {
         return ['status'=>'error','data'=>null,'message'=>'Usuario no existe'];
     }
 
+    // 2) Recuperamos los intentos de quiz del usuario
     $attempts = $DB->get_records_sql("
         SELECT qa.id AS attemptid
           FROM {quiz_attempts} qa
@@ -846,21 +852,47 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario.'];
     }
 
+    // 3) Buscamos el bloque dedication_atu en el curso
     $context  = \context_course::instance($params['courseid']);
     $blockrec = $DB->get_record('block_instances', [
-        'blockname'=>'dedication_atu',
-        'parentcontextid'=>$context->id
+        'blockname'       => 'dedication_atu',
+        'parentcontextid' => $context->id
     ], 'id', IGNORE_MISSING);
     if (!$blockrec) {
         return ['status'=>'error','data'=>null,'message'=>'El bloque dedication_atu no está en este curso.'];
     }
 
-    // 2) Bootstrap completo de Moodle
-    require_once($CFG->dirroot . '/config.php');       // carga $CFG, autoloader, sesión...
-    require_once($CFG->libdir   . '/externallib.php'); // external_api, etc.
-    require_once($CFG->libdir   . '/tcpdf/tcpdf.php'); // TCPDF
+    // 4) Preparamos el CSS adicional (tema printable + posible styles.css del bloque)
+    $css_adicional = '';
 
-    // 3) Simulamos $_GET con TODOS los parámetros (incluido attemptid[] como array)
+    // 4.a) CSS “impreso” del tema Moodle
+    $theme = !empty($CFG->theme) ? $CFG->theme : 'classic';
+    $printedcss = "{$CFG->dirroot}/theme/{$theme}/style/printed.css";
+    if (is_readable($printedcss)) {
+        $css_adicional .= "<style>\n" . file_get_contents($printedcss) . "\n</style>\n";
+    }
+
+    // 4.b) CSS propio del bloque (si existe)
+    $blockdir  = $CFG->dirroot . '/blocks/dedication_atu/';
+    $blockcss  = $blockdir . 'styles.css';
+    if (is_readable($blockcss)) {
+        $css_adicional .= "<style>\n" . file_get_contents($blockcss) . "\n</style>\n";
+    }
+
+    // 5) Definimos constantes TCPDF para el header (logo, título y texto)
+    // Logo del tema
+    $logopath = "{$CFG->dirroot}/theme/{$theme}/pix/logo.png";
+    if (file_exists($logopath)) {
+        define('PDF_HEADER_LOGO', basename($logopath));
+        define('PDF_HEADER_LOGO_WIDTH', 30);
+    }
+    // Títulos
+    $course = get_course($params['courseid']);
+    define('PDF_HEADER_TITLE',   format_string($course->fullname));
+    define('PDF_HEADER_STRING',  'Informe de pruebas');
+    define('PDF_HEADER_MARGIN',  5);
+
+    // 6) Simulamos la petición GET que espera dedication_atu.php
     $_GET = [
         'task'       => 'pdf_conjunto_pruebas',
         'courseid'   => $params['courseid'],
@@ -870,58 +902,54 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         'attemptid'  => array_map(function($a){ return $a->attemptid; }, $attempts),
     ];
 
-    // 4) Preparamos $PAGE SIN pasar el array attemptid
-    $scalarurl = [
-        'task'       => 'pdf_conjunto_pruebas',
-        'courseid'   => $params['courseid'],
-        'instanceid' => $blockrec->id,
-        'modo_pdf'   => 'true',
-        'userid'     => $user->id
-    ];
+    // 7) Preparamos $PAGE igual que Moodle
     $PAGE->set_context($context);
     $PAGE->set_url(new \moodle_url(
         '/blocks/dedication_atu/dedication_atu.php',
-        $scalarurl
+        [
+            'task'       => 'pdf_conjunto_pruebas',
+            'courseid'   => $params['courseid'],
+            'instanceid' => $blockrec->id,
+            'modo_pdf'   => 'true',
+            'userid'     => $user->id
+        ]
     ));
     $PAGE->set_pagelayout('report');
 
-    // 5) Incluimos el script ORIGINAL dentro de su carpeta
-    $blockdir = $CFG->dirroot . '/blocks/dedication_atu/';
-    $origdir  = getcwd();
+    // 8) Incluimos el script ORIGINAL dentro de su carpeta, con el CSS inyectado
+    $origdir = getcwd();
     chdir($blockdir);
-
     ob_start();
     try {
+        // $css_adicional será usado dentro de dedication_atu.php
         include('dedication_atu.php');
     } catch (\Throwable $e) {
         ob_end_clean();
         chdir($origdir);
         return [
-            'status'=>'error',
-            'data'=>null,
-            'message'=>'Error al incluir el script: '.$e->getMessage()
+            'status' => 'error',
+            'data'   => null,
+            'message'=> 'Error al incluir el script: '.$e->getMessage()
         ];
     }
     $pdf = ob_get_clean();
-
-    // volvemos al directorio original
     chdir($origdir);
 
-    // 6) Validamos que sea un PDF válido
+    // 9) Validamos que la salida sea un PDF
     if (strpos($pdf, '%PDF-') === false) {
         return [
-            'status'=>'error',
-            'data'=>null,
-            'message'=>'La salida no es un PDF válido. Fragmento: '
-                . htmlspecialchars(substr($pdf, 0, 500))
+            'status' => 'error',
+            'data'   => null,
+            'message'=> 'La salida no es un PDF válido. Fragmento: '
+                        . htmlspecialchars(substr($pdf, 0, 500))
         ];
     }
 
-    // 7) Devolvemos el PDF en Base64
+    // 10) Devolvemos el PDF en Base64
     return [
-        'status'=>'success',
-        'data'  => base64_encode($pdf),
-        'message'=>'PDF generado correctamente, idéntico al de Moodle.'
+        'status'  => 'success',
+        'data'    => base64_encode($pdf),
+        'message' => 'PDF generado correctamente con la estética de Moodle.'
     ];
 }
 
