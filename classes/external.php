@@ -1159,7 +1159,22 @@ public static function generar_zip_informes_grupo($courseid, $usernames) {
 public static function cuestionarios_calidad($courseid) {
     global $DB, $CFG;
 
-    // 1) Encuentra todos los cmid de los assign “evaluación de la calidad”
+    // 1) Validar parámetros y curso
+    $params = self::validate_parameters(
+        new \external_function_parameters([
+            'courseid' => new \external_value(PARAM_INT, 'ID de curso'),
+        ]),
+        compact('courseid')
+    );
+    if (!$DB->record_exists('course', ['id' => $params['courseid']])) {
+        return [
+            'status'  => 'error',
+            'data'    => null,
+            'message' => 'Curso no existe'
+        ];
+    }
+
+    // 2) Buscar todos los course_modules de tipo assign con “evaluación de la calidad”
     $sql = "
         SELECT cm.id AS cmid
           FROM {course_modules} cm
@@ -1170,43 +1185,55 @@ public static function cuestionarios_calidad($courseid) {
            AND LOWER(a.name) LIKE :pattern
     ";
     $assigns = $DB->get_records_sql($sql, [
-        'cid'     => $courseid,
+        'cid'     => $params['courseid'],
         'pattern' => '%evaluación de la calidad%'
     ]);
-    if (!$assigns) {
-        return ['status'=>'error','data'=>null,'message'=>'No hay cuestionarios de calidad'];
+    if (empty($assigns)) {
+        return [
+            'status'  => 'error',
+            'data'    => null,
+            'message' => 'No hay cuestionarios de calidad en este curso'
+        ];
     }
 
-    // 2) Para cada cmid, llama al downloadall.php
+    // 3) Generar sesskey para la descarga
     $sesskey = sesskey();
-    $zipChunks = [];
+
+    // 4) Para cada cmid, invocar la URL /mod/assign/view.php?action=downloadall
+    //    y recoger el binario ZIP. Aquí devolvemos sólo el primero,
+    //    que ya incluye todas las entregas de ese assign.
+    $firstZip = null;
     foreach ($assigns as $assign) {
         $url = $CFG->wwwroot
-             . '/mod/assign/downloadall.php'
-             . '?cmid='   . $assign->cmid
-             . '&mode=allsites'   // o el parámetro que use tu versión
-             . '&sesskey=' . $sesskey
-             . '&what=all';      // descarga todo
+             . '/mod/assign/view.php'
+             . '?id='      . $assign->cmid
+             . '&action=downloadall'
+             . '&sesskey=' . $sesskey;
+
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        $data = curl_exec($ch);
-        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $zipdata = curl_exec($ch);
+        $http   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
-        if ($code !== 200) {
-            return ['status'=>'error','data'=>null,'message'=>"Fallo al descargar ZIP de cmid {$assign->cmid}"];
+
+        if ($http !== 200 || substr($zipdata, 0, 4) !== "PK\x03\x04") {
+            // Si falla con el primero, devolvemos error
+            return [
+                'status'  => 'error',
+                'data'    => null,
+                'message' => "Fallo al descargar ZIP de cmid {$assign->cmid}"
+            ];
         }
-        $zipChunks[] = $data;
+
+        $firstZip = $zipdata;
+        break;  // Solo usamos el primer ZIP
     }
 
-    // 3) Si sólo hay un archivo ZIP, lo devolvemos directamente; si hay varios, los unimos
-    //    (por simplicidad vamos a devolver sólo el primero, que ya incluye todos).
-    $zipData = $zipChunks[0];
-
-    // 4) Devuelve binario en Base64
+    // 5) Devolver el ZIP en Base64
     return [
-        'status'=>'success',
-        'data'  => base64_encode($zipData),
-        'message' => 'ZIP de cuestionarios de calidad'
+        'status'  => 'success',
+        'data'    => base64_encode($firstZip),
+        'message' => 'ZIP de cuestionarios de calidad generado correctamente'
     ];
 }
 
