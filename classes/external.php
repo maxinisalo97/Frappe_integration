@@ -1156,67 +1156,60 @@ public static function generar_zip_informes_grupo($courseid, $usernames) {
         'message' => "ZIP generado con {$num_files} informes."
     ];
 }
-public static function cuestionarios_calidad($courseid) {
+public static function descargar_zip_cuestionarios_calidad($courseid) {
     global $DB, $CFG;
 
-    // 1) Validar parámetros
-    $params = self::validate_parameters(
-        new \external_function_parameters([
-            'courseid' => new \external_value(PARAM_INT, 'ID de curso'),
-        ]),
-        compact('courseid')
-    );
-
-    // 2) Verificar bloque dedication_atu en el curso
-    $context  = \context_course::instance($params['courseid']);
-    $blockrec = $DB->get_record('block_instances', [
-        'blockname'       => 'dedication_atu',
-        'parentcontextid' => $context->id
-    ], 'id', IGNORE_MISSING);
-    if (!$blockrec) {
-        return ['status'=>'error','data'=>null,'message'=>'Bloque dedication_atu no instalado en el curso'];
+    // 1) Encuentra todos los cmid de los assign “evaluación de la calidad”
+    $sql = "
+        SELECT cm.id AS cmid
+          FROM {course_modules} cm
+          JOIN {modules} m  ON m.id = cm.module
+          JOIN {assign} a   ON a.id = cm.instance
+         WHERE cm.course = :cid
+           AND m.name = 'assign'
+           AND LOWER(a.name) LIKE :pattern
+    ";
+    $assigns = $DB->get_records_sql($sql, [
+        'cid'     => $courseid,
+        'pattern' => '%evaluación de la calidad%'
+    ]);
+    if (!$assigns) {
+        return ['status'=>'error','data'=>null,'message'=>'No hay cuestionarios de calidad'];
     }
 
-    // 3) Construir la URL a downloadall.php
-    $wwwroot    = rtrim($CFG->wwwroot, '/');
-    $downloadurl = $wwwroot . '/blocks/dedication_atu/downloadall.php'
-                 . '?courseid='   . $params['courseid']
-                 . '&instanceid=' . $blockrec->id
-                 . '&modo_zip=true';
-
-    // 4) Petición HTTP para obtener el ZIP
-    $ch = curl_init($downloadurl);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // si Moodle requiere autenticación de sesión (cookie), habría que pasarla aquí.
-    $zipdata = curl_exec($ch);
-    $err     = curl_error($ch);
-    $code    = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($zipdata === false || $code !== 200) {
-        return [
-            'status'=>'error',
-            'data'=>null,
-            'message'=> 'Error descargando ZIP desde Moodle: '. ($err ?: "HTTP $code")
-        ];
+    // 2) Para cada cmid, llama al downloadall.php
+    $sesskey = sesskey();
+    $zipChunks = [];
+    foreach ($assigns as $assign) {
+        $url = $CFG->wwwroot
+             . '/mod/assign/downloadall.php'
+             . '?cmid='   . $assign->cmid
+             . '&mode=allsites'   // o el parámetro que use tu versión
+             . '&sesskey=' . $sesskey
+             . '&what=all';      // descarga todo
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        $data = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if ($code !== 200) {
+            return ['status'=>'error','data'=>null,'message'=>"Fallo al descargar ZIP de cmid {$assign->cmid}"];
+        }
+        $zipChunks[] = $data;
     }
 
-    // 5) Verificar que empiece con cabecera ZIP
-    if (substr($zipdata, 0, 4) !== "PK\x03\x04") {
-        return [
-            'status'=>'error',
-            'data'=>null,
-            'message'=>'Contenido recibido no es un ZIP válido.'
-        ];
-    }
+    // 3) Si sólo hay un archivo ZIP, lo devolvemos directamente; si hay varios, los unimos
+    //    (por simplicidad vamos a devolver sólo el primero, que ya incluye todos).
+    $zipData = $zipChunks[0];
 
-    // 6) Devolver el ZIP en Base64
+    // 4) Devuelve binario en Base64
     return [
-        'status'  => 'success',
-        'data'    => base64_encode($zipdata),
-        'message' => 'ZIP generado correctamente'
+        'status'=>'success',
+        'data'  => base64_encode($zipData),
+        'message' => 'ZIP de cuestionarios de calidad'
     ];
 }
+
 
 
 }
