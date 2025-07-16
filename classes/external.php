@@ -1156,7 +1156,7 @@ public static function generar_zip_informes_grupo($courseid, $usernames) {
         'message' => "ZIP generado con {$num_files} informes."
     ];
 }
-public static function descargar_zip_cuestionarios_calidad($courseid) {
+public static function cuestionarios_calidad($courseid) {
     global $DB, $CFG;
 
     // 1) Encuentra todos los cmid de los assign “evaluación de la calidad”
