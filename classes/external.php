@@ -814,7 +814,7 @@ public static function obtener_notas_curso($courseid) {
 public static function generar_pdf_conjunto_usuario($courseid, $username) {
     global $DB, $CFG, $PAGE;
 
-    // 0) Bootstrap de Moodle
+    // 0) Bootstrap completo de Moodle - CRÍTICO para la estética
     require_once($CFG->dirroot . '/config.php');
     require_once($CFG->libdir   . '/externallib.php');
     require_once($CFG->libdir   . '/tcpdf/tcpdf.php');
@@ -836,10 +836,11 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     }
     $course = get_course($params['courseid']);
 
-    // 3) Requerir login y contexto “report” idéntico a la UI
+    // 3) CONFIGURACIÓN CRÍTICA: Establecer contexto de página idéntico al web
     require_login($course->id);
     $context = \context_course::instance($course->id);
-    // Parámetros comunes para la URL
+    
+    // Parámetros exactos que usa la interfaz web
     $urlparams = [
         'task'        => 'pdf_conjunto_pruebas',
         'modo_pdf'    => 'true',
@@ -847,13 +848,15 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         'courseid'    => $course->id,
         'userid'      => $user->id,
     ];
+    
+    // CRÍTICO: Configurar PAGE exactamente como lo hace dedication_atu.php
     $PAGE->set_context($context);
     $PAGE->set_url(new \moodle_url('/blocks/dedication_atu/dedication_atu.php', $urlparams));
     $PAGE->set_pagelayout('report');
     $PAGE->set_title(format_string($course->shortname));
     $PAGE->set_heading(format_string($course->fullname));
 
-    // 4) Detección del tema activo (Moodle 4.x)
+    // 4) ESTILOS CRÍTICOS: Cargar CSS del tema activo (Moodle 4.x)
     $theme = !empty($PAGE->theme->name)
            ? $PAGE->theme->name
            : (!empty($CFG->theme) ? $CFG->theme : 'classic');
@@ -864,14 +867,80 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
     } else {
         debugging("No se pudo leer $printedcss", DEBUG_DEVELOPER);
     }
-    // CSS propio del bloque
+    
+    // CSS específico del bloque - CRÍTICO para la estética de las preguntas
     $blockdir = $CFG->dirroot . '/blocks/dedication_atu/';
     $blockcss = $blockdir . 'styles.css';
     if (is_readable($blockcss)) {
         $css_adicional .= "<style>\n" . file_get_contents($blockcss) . "\n</style>\n";
     }
 
-    // 5) Recuperar intentos de quiz
+    // CSS ADICIONAL ESPECÍFICO DEL PLUGIN - EXACTAMENTE como en dedication_atu.php
+    $css_adicional .= <<<ENDP
+ <style>
+        *
+        {
+            box-sizing: border-box;
+            font-family: verdana;
+            font-size: 12px;
+        }
+        table.quizreviewsummary
+        {
+            
+        }
+        
+        table.quizreviewsummary tbody th
+        {
+            color: #3e65a0;
+            font-weight: bold;
+            text-align: right;
+            padding-right: 10px;
+        }
+        table.quizreviewsummary tbody th, table.quizreviewsummary tbody td
+        {
+            background-color: #f1f1f1;
+        }
+        
+        div.que
+        {
+            display: flex;
+            margin-top: 2rem;
+        }
+        div.info
+        {
+            width: 10rem;
+            height: 10rem;
+            
+            padding: .5em;
+            background-color: #dee2e6;
+            border: 1px solid #cad0d7;
+            margin-right: 2rem;
+            padding: 1rem;
+        }
+        div.content
+        {
+            
+        }
+        div.formulation{
+             width: 35rem;
+            color: #2f6473;
+            background-color: #def2f8;
+            border-color: #d1edf6;
+                padding: 2rem;
+            margin-bottom: 1rem;
+        }
+        div.outcome{
+            color: #7d5a29;
+            background-color: #fcefdc;
+            border-color: #fbe8cd;
+            padding: 2rem;
+            
+        }
+        
+    </style>
+ENDP;
+
+    // 5) Recuperar intentos de quiz - EXACTAMENTE como en dedication_atu.php
     $attempts = $DB->get_records_sql("
         SELECT qa.id AS attemptid
           FROM {quiz_attempts} qa
@@ -886,6 +955,7 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         'k' => '%prueba%',
         'u' => $user->id
     ]);
+    
     if (empty($attempts)) {
         return ['status'=>'error','data'=>null,'message'=>'No hay pruebas para este usuario.'];
     }
@@ -895,38 +965,42 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         'blockname'       => 'dedication_atu',
         'parentcontextid' => $context->id
     ], 'id', IGNORE_MISSING);
+    
     if (!$blockrec) {
         return ['status'=>'error','data'=>null,'message'=>'El bloque dedication_atu no está en este curso.'];
     }
     $urlparams['instanceid'] = $blockrec->id;
 
-    // 7) Simular GET y generar PDF vía include()
+    // 7) SIMULACIÓN EXACTA: Configurar variables como lo hace la interfaz web
     $_GET = $urlparams;
     $_GET['attemptid'] = array_map(function($a){ return $a->attemptid; }, $attempts);
 
-    // Inyectar CSS adicional en alguna variable global que use dedication_atu.php
-    // (dedication_atu.php debe leer $css_adicional)
-    $GLOBALS['css_adicional'] = $css_adicional;
+    // Variables para títulos (exactamente como en dedication_atu.php)
+    $_user_title = str_replace(' ', '_', $user->firstname . " ". $user->lastname);
+    $_course_title = "Curso_" . str_replace(' ', '_',$course->shortname);
 
-    // Incluir el script original y capturar la salida
-    $origdir = getcwd();
-    chdir($blockdir);
-    ob_start();
-    try {
-        include('dedication_atu.php');
-    } catch (\Throwable $e) {
-        ob_end_clean();
-        chdir($origdir);
-        return [
-            'status' => 'error',
-            'data'   => null,
-            'message'=> 'Error al incluir dedication_atu.php: '.$e->getMessage()
-        ];
+    // 8) GENERAR HTML: Exactamente como lo hace pdf_conjunto_pruebas
+    require_once($blockdir . 'dedication_atu_lib.php');
+    
+    $informe_respuestas_html_conjunto = $css_adicional;
+    
+    foreach($_GET['attemptid'] as $_attemptid) {
+        $informe_respuestas_html_conjunto .= libDedication_atu::devuelve_informe_respuestas_html(
+            $_attemptid, 
+            $blockrec->id, 
+            $course->id
+        );
     }
-    $pdf = ob_get_clean();
-    chdir($origdir);
 
-    // 8) Validar que es un PDF
+    // 9) GENERAR PDF: Usar EXACTAMENTE la misma función que usa dedication_atu.php
+    $titulo = "Informe-todas-pruebas-" . $_user_title . "-" . $_course_title;
+    
+    // Capturar la salida de la función original
+    ob_start();
+    libDedication_atu::genera_pdf_prueba($informe_respuestas_html_conjunto, $titulo);
+    $pdf = ob_get_clean();
+
+    // 10) Validar que es un PDF válido
     if (strpos($pdf, '%PDF-') === false) {
         return [
             'status' => 'error',
@@ -936,11 +1010,11 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         ];
     }
 
-    // 9) Devolver PDF en Base64
+    // 11) Devolver PDF en Base64
     return [
         'status'  => 'success',
         'data'    => base64_encode($pdf),
-        'message' => 'PDF generado correctamente con la estética de Moodle.'
+        'message' => 'PDF generado correctamente con la estética idéntica a Moodle web.'
     ];
 }
 
