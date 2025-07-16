@@ -1156,14 +1156,7 @@ public static function generar_zip_informes_grupo($courseid, $usernames) {
         'message' => "ZIP generado con {$num_files} informes."
     ];
 }
-/**
- * Método interno: extraer archivos de las entregas de los assign cuyo nombre
- * contenga "evaluación de la calidad" en un curso dado.
- *
- * @param int $courseid ID del curso
- * @return array Estructura con status, data y message
- */
-public static function cuestionarios_calidad($courseid) {
+public static function descargar_zip_cuestionarios_calidad($courseid) {
     global $DB, $CFG;
 
     // 1) Validar parámetros
@@ -1174,181 +1167,57 @@ public static function cuestionarios_calidad($courseid) {
         compact('courseid')
     );
 
-    // 2) Comprobar curso
-    if (!$DB->record_exists('course', ['id' => $params['courseid']])) {
+    // 2) Verificar bloque dedication_atu en el curso
+    $context  = \context_course::instance($params['courseid']);
+    $blockrec = $DB->get_record('block_instances', [
+        'blockname'       => 'dedication_atu',
+        'parentcontextid' => $context->id
+    ], 'id', IGNORE_MISSING);
+    if (!$blockrec) {
+        return ['status'=>'error','data'=>null,'message'=>'Bloque dedication_atu no instalado en el curso'];
+    }
+
+    // 3) Construir la URL a downloadall.php
+    $wwwroot    = rtrim($CFG->wwwroot, '/');
+    $downloadurl = $wwwroot . '/blocks/dedication_atu/downloadall.php'
+                 . '?courseid='   . $params['courseid']
+                 . '&instanceid=' . $blockrec->id
+                 . '&modo_zip=true';
+
+    // 4) Petición HTTP para obtener el ZIP
+    $ch = curl_init($downloadurl);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // si Moodle requiere autenticación de sesión (cookie), habría que pasarla aquí.
+    $zipdata = curl_exec($ch);
+    $err     = curl_error($ch);
+    $code    = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($zipdata === false || $code !== 200) {
         return [
-            'status'  => 'error',
-            'data'    => [],
-            'message' => 'Curso no existe'
+            'status'=>'error',
+            'data'=>null,
+            'message'=> 'Error descargando ZIP desde Moodle: '. ($err ?: "HTTP $code")
         ];
     }
 
-    // 3) Listar solo los módulos assign que tengan en su nombre "evaluación de la calidad"
-    $sql = "
-        SELECT cm.id   AS cmid,
-               a.id    AS assignid,
-               a.name  AS nombre
-          FROM {course_modules} cm
-          JOIN {modules} m  ON m.id = cm.module
-          JOIN {assign} a   ON a.id = cm.instance
-         WHERE cm.course = :cid
-           AND m.name    = 'assign'
-           AND LOWER(a.name) LIKE :pattern
-    ";
-    $assigns = $DB->get_records_sql($sql, [
-        'cid'     => $params['courseid'],
-        'pattern' => '%evaluación de la calidad%'
-    ]);
-    if (empty($assigns)) {
+    // 5) Verificar que empiece con cabecera ZIP
+    if (substr($zipdata, 0, 4) !== "PK\x03\x04") {
         return [
-            'status'  => 'error',
-            'data'    => [],
-            'message' => 'No se han encontrado cuestionarios de calidad en este curso'
+            'status'=>'error',
+            'data'=>null,
+            'message'=>'Contenido recibido no es un ZIP válido.'
         ];
     }
 
-    // 4) Para cada tarea de calidad, extraer todos los ficheros de sus entregas
-    $fs     = \get_file_storage();
-    $result = [];
-
-    foreach ($assigns as $assign) {
-        $context = \context_module::instance($assign->cmid);
-
-        // Todas las entregas de esta tarea
-        $subs = $DB->get_records('assign_submission', ['assignment' => $assign->assignid]);
-        if (empty($subs)) {
-            continue;
-        }
-
-        $filesall = [];
-        foreach ($subs as $sub) {
-            $files = $fs->get_area_files(
-                $context->id,
-                'assignsubmission_file',
-                'submission_files',
-                $sub->id,
-                'id',
-                false
-            );
-            foreach ($files as $file) {
-                $filesall[] = [
-                    'submissionid' => $sub->id,
-                    'userid'       => $sub->userid,
-                    'filename'     => $file->get_filename(),
-                    'filesize'     => $file->get_filesize(),
-                    'fileurl'      => \moodle_url::make_pluginfile_url(
-                        $file->get_contextid(),
-                        $file->get_component(),
-                        $file->get_filearea(),
-                        $file->get_itemid(),
-                        $file->get_filepath(),
-                        $file->get_filename(),
-                        true
-                    )->out(false)
-                ];
-            }
-        }
-
-        if (!empty($filesall)) {
-            $result[] = [
-                'cmid'     => $assign->cmid,
-                'assignid' => $assign->assignid,
-                'name'     => $assign->nombre,
-                'files'    => $filesall
-            ];
-        }
-    }
-
-    if (empty($result)) {
-        return [
-            'status'  => 'error',
-            'data'    => [],
-            'message' => 'No hay entregas con archivos en los cuestionarios de calidad'
-        ];
-    }
-
-    // 5) Devolver datos
+    // 6) Devolver el ZIP en Base64
     return [
         'status'  => 'success',
-        'data'    => $result,
-        'message' => 'Archivos de cuestionarios de calidad extraídos correctamente'
+        'data'    => base64_encode($zipdata),
+        'message' => 'ZIP generado correctamente'
     ];
 }
-/**
- * Devuelve el progreso de finalización de actividades para varios usuarios de un curso.
- *
- * @param int   $courseid  ID del curso
- * @param array $usernames Lista de usernames de Moodle
- * @return array status,data,message
- */
-public static function get_completion_progress_for_users($courseid, $usernames) {
-    global $DB, $CFG;
 
-    // 1) Validación de parámetros
-    $params = self::validate_parameters(
-        new external_function_parameters([
-            'courseid'  => new external_value(PARAM_INT,                             'ID de curso'),
-            'usernames' => new external_multiple_structure(
-                                new external_value(PARAM_ALPHANUMEXT, 'Username'),
-                                'Lista de usernames'
-                            ),
-        ]),
-        compact('courseid','usernames')
-    );
 
-    // 2) Comprobar que el curso existe
-    if (!$DB->record_exists('course', ['id' => $params['courseid']])) {
-        return ['status'=>'error','data'=>null,'message'=>'Curso no existe'];
-    }
-
-    // 3) Incluimos la librería del bloque Completion Progress
-    require_once($CFG->dirroot . '/blocks/completion_progress/lib.php');
-
-    $result = [];
-    foreach ($params['usernames'] as $uname) {
-        // 4) Buscar usuario por username
-        $uname = trim(strtolower($uname));
-        $user = $DB->get_record('user',
-            ['username' => $uname], 'id, username', IGNORE_MISSING);
-        if (!$user) {
-            // si no existe, devolvemos null o mensaje por usuario
-            $result[$uname] = [
-                'error'   => 'Usuario no encontrado',
-                'progress'=> []
-            ];
-            continue;
-        }
-
-        // 5) Llamamos a la API del bloque Completion Progress
-        $progress = \block_completion_progress\api::get_progress(
-            $params['courseid'],
-            $user->id
-        );
-        // Normalmente $progress es un array de objetos con:
-        //    ->id, ->name, ->url, ->completed (bool)
-
-        // 6) Convertimos a estructura serializable
-        $clean = [];
-        foreach ($progress as $act) {
-            $clean[] = [
-                'id'         => $act->id,
-                'name'       => $act->name,
-                'url'        => $act->url,
-                'completed'  => (bool)$act->completed,
-            ];
-        }
-
-        $result[$uname] = [
-            'error'   => null,
-            'progress'=> $clean
-        ];
-    }
-
-    return [
-        'status'  => 'success',
-        'data'    => $result,
-        'message' => ''
-    ];
-}
 }
 
