@@ -85,7 +85,7 @@ class external extends external_api {
             'generar_pdf_conjunto_usuario'   => 'generar_pdf_conjunto_usuario',
             'generar_zip_informes_grupo' => 'generar_zip_informes_grupo',
             'generar_pdf_informe_usuario' => 'generar_pdf_informe_usuario',
-            'descargar_zip_cuestionarios_calidad' => 'descargar_zip_cuestionarios_calidad',
+            'cuestionarios_calidad' => 'cuestionarios_calidad',
             'get_completion_progress_for_users' => 'get_completion_progress_for_users'
         ];
 
@@ -1156,7 +1156,7 @@ public static function generar_zip_informes_grupo($courseid, $usernames) {
         'message' => "ZIP generado con {$num_files} informes."
     ];
 }
-public static function descargar_zip_cuestionarios_calidad($courseid) {
+public static function cuestionarios_calidad($courseid) {
     global $DB, $CFG;
 
     // 1) Validar parámetros
