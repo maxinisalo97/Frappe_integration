@@ -1236,7 +1236,82 @@ public static function cuestionarios_calidad($courseid) {
         'message' => 'ZIP de cuestionarios de calidad generado correctamente'
     ];
 }
-
+/**
+ * Devuelve el progreso de finalización de actividades para varios usuarios de un curso.
+ *
+ * @param int   $courseid  ID del curso
+ * @param array $usernames Lista de usernames de Moodle
+ * @return array status,data,message
+ */
+public static function get_completion_progress_for_users($courseid, $usernames) {
+    global $DB, $CFG;
+ 
+    // 1) Validación de parámetros
+    $params = self::validate_parameters(
+        new external_function_parameters([
+            'courseid'  => new external_value(PARAM_INT,                             'ID de curso'),
+            'usernames' => new external_multiple_structure(
+                                new external_value(PARAM_ALPHANUMEXT, 'Username'),
+                                'Lista de usernames'
+                            ),
+        ]),
+        compact('courseid','usernames')
+    );
+ 
+    // 2) Comprobar que el curso existe
+    if (!$DB->record_exists('course', ['id' => $params['courseid']])) {
+        return ['status'=>'error','data'=>null,'message'=>'Curso no existe'];
+    }
+ 
+    // 3) Incluimos la librería del bloque Completion Progress
+    require_once($CFG->dirroot . '/blocks/completion_progress/lib.php');
+ 
+    $result = [];
+    foreach ($params['usernames'] as $uname) {
+        // 4) Buscar usuario por username
+        $uname = trim(strtolower($uname));
+        $user = $DB->get_record('user',
+            ['username' => $uname], 'id, username', IGNORE_MISSING);
+        if (!$user) {
+            // si no existe, devolvemos null o mensaje por usuario
+            $result[$uname] = [
+                'error'   => 'Usuario no encontrado',
+                'progress'=> []
+            ];
+            continue;
+        }
+ 
+        // 5) Llamamos a la API del bloque Completion Progress
+        $progress = \block_completion_progress\api::get_progress(
+            $params['courseid'],
+            $user->id
+        );
+        // Normalmente $progress es un array de objetos con:
+        //    ->id, ->name, ->url, ->completed (bool)
+ 
+        // 6) Convertimos a estructura serializable
+        $clean = [];
+        foreach ($progress as $act) {
+            $clean[] = [
+                'id'         => $act->id,
+                'name'       => $act->name,
+                'url'        => $act->url,
+                'completed'  => (bool)$act->completed,
+            ];
+        }
+ 
+        $result[$uname] = [
+            'error'   => null,
+            'progress'=> $clean
+        ];
+    }
+ 
+    return [
+        'status'  => 'success',
+        'data'    => $result,
+        'message' => ''
+    ];
+}
 
 
 }
