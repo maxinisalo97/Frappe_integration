@@ -985,7 +985,7 @@ ENDP;
     $informe_respuestas_html_conjunto = $css_adicional;
     
     foreach($_GET['attemptid'] as $_attemptid) {
-        $informe_respuestas_html_conjunto .= libDedication_atu::devuelve_informe_respuestas_html(
+        $informe_respuestas_html_conjunto .= \libDedication_atu::devuelve_informe_respuestas_html(
             $_attemptid, 
             $blockrec->id, 
             $course->id
@@ -997,7 +997,7 @@ ENDP;
     
     // Capturar la salida de la función original
     ob_start();
-    libDedication_atu::genera_pdf_prueba($informe_respuestas_html_conjunto, $titulo);
+    \libDedication_atu::genera_pdf_prueba($informe_respuestas_html_conjunto, $titulo);
     $pdf = ob_get_clean();
 
     // 10) Validar que es un PDF válido
