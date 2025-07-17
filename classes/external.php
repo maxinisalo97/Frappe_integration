@@ -937,25 +937,16 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
             padding: 2rem;
             
         }
-        /* Mostramos siempre el botón radio */
-    .outcome .answer input[type="radio"] {
+   
+    /* ===== ESTILOS PARA RADIO BUTTONS Y LABELS ===== */
+    /* Mostrar siempre el input y el label */
+    .outcome .answer input[type="radio"],
+    .outcome .answer label {
         display: inline-block !important;
         opacity: 1 !important;
-        width: auto !important;
-        margin-right: 0.5em;
     }
 
-    /* Añadimos la bolita antes del label de la opción marcada */
-    .outcome .answer input[type="radio"]:checked + label::before {
-        content: "●";
-        display: inline-block;
-        width: 1em;
-        margin-right: .5em;
-        font-size: 1.2em;
-        color: #155724;
-    }
-
-    /* Resaltamos el fondo del label marcado */
+    /* Resaltar el label marcado */
     .outcome .answer input[type="radio"]:checked + label {
         background-color: #d4edda;
         color:            #155724;
@@ -964,6 +955,13 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         border-radius:    .25rem;
         margin-bottom:    .5rem;
         display: block;
+    }
+
+    /* ===== BULLET FRENTE A LA OPCIÓN SELECCIONADA ===== */
+    .bullet {
+        font-size: 1.4em;
+        color: #155724;
+        margin-right: 0.3em;
     }
         
     </style>
@@ -1020,6 +1018,19 @@ ENDP;
             $course->id
         );
     }
+
+    // —— NUEVO BLOQUE: INYECTAR EL BULLET EN LAS RESPUESTAS SELECCIONADAS ——
+$informe_respuestas_html_conjunto = preg_replace_callback(
+    '#<div\s+class="answer selected">(.*?)</div>#s',
+    function($m) {
+        // metemos un <span class="bullet">●</span> al principio
+        return '<div class="answer selected">'
+             . '<span class="bullet">●</span>'
+             . $m[1]
+             . '</div>';
+    },
+    $informe_respuestas_html_conjunto
+);
 
     // 9) GENERAR PDF: Usar EXACTAMENTE la misma función que usa dedication_atu.php
     $titulo = "Informe-todas-pruebas-" . $_user_title . "-" . $_course_title;
