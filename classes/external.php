@@ -937,40 +937,33 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
             padding: 2rem;
             
         }
-            .outcome .answer.correct {
-        background-color: #d4edda !important;
-        color:            #155724 !important;
-        border:           1px solid #c3e6cb;
-        padding:          .5em;
-        border-radius:    .25rem;
-        margin-bottom:    .5rem;
-    }
-    .outcome .answer.wrong {
-        background-color: #f8d7da !important;
-        color:            #721c24 !important;
-        border:           1px solid #f5c6cb;
-        padding:          .5em;
-        border-radius:    .25rem;
-        margin-bottom:    .5rem;
-    }
-    
-    .outcome .answer.selected input[type="radio"] {
+        /* Mostramos siempre el botón radio */
+    .outcome .answer input[type="radio"] {
         display: inline-block !important;
         opacity: 1 !important;
         width: auto !important;
         margin-right: 0.5em;
     }
-        .outcome .answer.selected {
-        position: relative;
-        padding-left: 1.5em !important;
-    }
-    .outcome .answer.selected::before {
+
+    /* Añadimos la bolita antes del label de la opción marcada */
+    .outcome .answer input[type="radio"]:checked + label::before {
         content: "●";
-        position: absolute;
-        left: 0;
-        top: 0.2em;
+        display: inline-block;
+        width: 1em;
+        margin-right: .5em;
         font-size: 1.2em;
         color: #155724;
+    }
+
+    /* Resaltamos el fondo del label marcado */
+    .outcome .answer input[type="radio"]:checked + label {
+        background-color: #d4edda;
+        color:            #155724;
+        border:           1px solid #c3e6cb;
+        padding:          .5em;
+        border-radius:    .25rem;
+        margin-bottom:    .5rem;
+        display: block;
     }
         
     </style>
