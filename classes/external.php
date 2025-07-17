@@ -953,13 +953,24 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         border-radius:    .25rem;
         margin-bottom:    .5rem;
     }
+    
+    .outcome .answer.selected input[type="radio"] {
+        display: inline-block !important;
+        opacity: 1 !important;
+        width: auto !important;
+        margin-right: 0.5em;
+    }
         .outcome .answer.selected {
-        background-color: #fff3cd !important;
-        color:            #856404 !important;
-        border:           1px solid #ffeeba;
-        padding:          .5em;
-        border-radius:    .25rem;
-        margin-bottom:    .5rem;
+        position: relative;
+        padding-left: 1.5em !important;
+    }
+    .outcome .answer.selected::before {
+        content: "●";
+        position: absolute;
+        left: 0;
+        top: 0.2em;
+        font-size: 1.2em;
+        color: #155724;
     }
         
     </style>
