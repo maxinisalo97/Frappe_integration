@@ -953,6 +953,14 @@ public static function generar_pdf_conjunto_usuario($courseid, $username) {
         border-radius:    .25rem;
         margin-bottom:    .5rem;
     }
+        .outcome .answer.selected {
+        background-color: #fff3cd !important;
+        color:            #856404 !important;
+        border:           1px solid #ffeeba;
+        padding:          .5em;
+        border-radius:    .25rem;
+        margin-bottom:    .5rem;
+    }
         
     </style>
 ENDP;
